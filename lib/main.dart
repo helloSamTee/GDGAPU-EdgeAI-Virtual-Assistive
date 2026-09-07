@@ -1,80 +1,332 @@
-import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_gemma/flutter_gemma.dart';
+import 'package:flutter_gemma_litertlm/flutter_gemma_litertlm.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:object_detection/object_detection.dart';
 
+import 'app_tools.dart';
 import 'camera_page.dart';
 import 'chatbot_page.dart';
+import 'google_auth_service.dart';
+
+const String _modelUrl =
+    'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/'
+    'resolve/main/gemma-4-E2B-it.litertlm';
 
 Future<void> main() async {
-  // Ensure that plugin services are initialized so that `availableCameras()`
-  // can be called before `runApp()`
   WidgetsFlutterBinding.ensureInitialized();
+  await dotenv.load(fileName: '.env');
 
-  // Obtain a list of the available cameras on the device.
-  final cameras = await availableCameras();
+  // initialize() just registers the plugin/engine — it does not download or
+  // load anything, so it's safe (and fast) to await before runApp.
+  const hfToken = String.fromEnvironment('HUGGINGFACE_TOKEN');
+  await FlutterGemma.initialize(
+    inferenceEngines: const [LiteRtLmEngine()],
+    huggingFaceToken: hfToken.isNotEmpty ? hfToken : null,
+  );
 
-  // Get a specific camera from the list of available cameras.
-  final firstCamera = cameras.isNotEmpty ? cameras.first : null;
-
-  runApp(MyApp(camera: firstCamera));
+  // Everything heavy (camera enumeration, model download/load, object
+  // detector init, Google auth) now happens INSIDE the app, after the first
+  // frame renders, with progress shown on screen instead of blocking here.
+  runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key, required this.camera});
-
-  final CameraDescription? camera;
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flood Report Demo',
+      title: 'Vision-Assistive AI Application',
       theme: ThemeData.dark(),
-      home: HomeScreen(camera: camera),
+      home: const HomeScreen(),
     );
   }
 }
 
-// A simple landing page that lets the user pick between the two dummy
-// pages: the camera capture page and the chatbot page.
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key, required this.camera});
+enum _InitStage { camera, modelDownload, modelLoad, detector, ready }
 
-  final CameraDescription? camera;
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  _InitStage _stage = _InitStage.camera;
+  double? _downloadProgress; // 0.0–1.0, null while not downloading
+  String? _initError;
+
+  CameraDescription? _camera;
+  InferenceChat? _cameraChat;
+  InferenceChat? _chatbotChat;
+  ObjectDetector? _detector;
+  FlutterTts? _tts;
+
+  bool _isSigningIn = false;
+  bool _isGoogleAuthenticated = false;
+  String? _authMessage;
+  int _selectedIndex = 0;
+
+  // This list stores the screens for each tab
+  List<Widget> get _screens => [
+    CameraPage(
+      camera: _camera!,
+      detector: _detector!,
+      chat: _cameraChat!,
+      tts: _tts!,
+    ),
+    ChatbotPage(chat: _chatbotChat!, visionChat: _cameraChat!, tts: _tts!),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _initEverything();
+  }
+
+  Future<void> _initEverything() async {
+    try {
+      setState(() => _stage = _InitStage.camera);
+      final cameras = await availableCameras();
+      _camera = cameras.isNotEmpty ? cameras.first : null;
+
+      setState(() {
+        _stage = _InitStage.modelDownload;
+        _downloadProgress = 0;
+      });
+
+      final hfToken = dotenv.env['HUGGINGFACE_TOKEN'];
+      // install() is idempotent: it skips an existing download and restores
+      // the active model identity needed by getActiveModel().
+      await FlutterGemma.installModel(
+            modelType: ModelType.gemma4,
+            fileType: ModelFileType.litertlm,
+          )
+          .fromNetwork(
+            _modelUrl,
+            token: hfToken?.isNotEmpty == true ? hfToken : null,
+          )
+          .withProgress((progress) {
+            if (mounted) {
+              setState(() => _downloadProgress = progress / 100);
+            }
+          })
+          .install();
+
+      setState(() => _stage = _InitStage.modelLoad);
+
+      final model = await FlutterGemma.getActiveModel(
+        maxTokens: 4096,
+        // The device's OpenCL LiteRT accelerator crashes while compiling this
+        // model. CPU is slower, but keeps model startup inside Dart's error
+        // handling instead of terminating the process in native code.
+        preferredBackend: PreferredBackend.cpu,
+        // The vision encoder has its own backend; keep it on CPU too.
+        preferredVisionBackend: PreferredBackend.cpu,
+        supportImage: true,
+        maxNumImages: 1,
+      );
+
+      _cameraChat = await model.openChat(
+        systemInstruction:
+            'Given the list of detected objects, you describe what is in a photo concisely for a visually '
+            'impaired user, and read aloud any visible text in the image.',
+      );
+
+      _chatbotChat = await model.openChat(
+        tools: AppTools.all,
+        supportsFunctionCalls: true,
+        systemInstruction: '''
+            You are a helpful assistant.
+
+            When a request requires calendar or email data, use the registered tools.
+            Never show tool-call JSON to the user.
+            Never show raw tool-result JSON to the user.
+            After a tool returns, explain the result in clear, natural language.
+
+            For image questions, inspect the attached image and describe what you see.
+            ''',
+      );
+
+      setState(() => _stage = _InitStage.detector);
+      _detector = await ObjectDetector.create();
+
+      _tts = FlutterTts();
+      await _tts!.setLanguage('en-US');
+      await _tts!.setSpeechRate(0.5);
+      await _tts!.setPitch(1.0);
+
+      if (!mounted) return;
+      setState(() => _stage = _InitStage.ready);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _initError = 'Setup failed: $e');
+    }
+  }
+
+  Future<void> _ensureGoogleAuth() async {
+    setState(() {
+      _isSigningIn = true;
+      _authMessage = null;
+    });
+
+    try {
+      await GoogleAuthService.instance.getAuthenticatedClient();
+      if (!mounted) return;
+      setState(() {
+        _isGoogleAuthenticated = true;
+        _isSigningIn = false;
+        _authMessage = 'Google connected';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isGoogleAuthenticated = false;
+        _isSigningIn = false;
+        _authMessage = 'Google sign-in failed: $error';
+      });
+    }
+  }
+
+  String _stageLabel() {
+    switch (_stage) {
+      case _InitStage.camera:
+        return 'Finding cameras...';
+      case _InitStage.modelDownload:
+        return _downloadProgress != null
+            ? 'Downloading model: ${(_downloadProgress! * 100).toStringAsFixed(0)}%'
+            : 'Preparing model download...';
+      case _InitStage.modelLoad:
+        return 'Loading model into memory...';
+      case _InitStage.detector:
+        return 'Starting object detector...';
+      case _InitStage.ready:
+        return 'Ready';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final isReady = _stage == _InitStage.ready;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Demo Home')),
+      appBar: AppBar(title: const Text('Edge AI Vision Assistant')),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _selectedIndex, // Highlight the selected tab
+        onTap: (index) {
+          setState(() {
+            _selectedIndex = index; // Update selected index
+          });
+        },
+        items: [
+          BottomNavigationBarItem(icon: Icon(Icons.camera), label: 'Camera'),
+          BottomNavigationBarItem(icon: Icon(Icons.chat), label: 'Chat'),
+        ],
+      ),
       body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ElevatedButton.icon(
-              icon: const Icon(Icons.camera_alt),
-              label: const Text('Open Camera Page'),
-              onPressed:
-                  camera == null
-                      ? null
-                      : () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (context) => CameraPage(camera: camera!),
-                          ),
-                        );
-                      },
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.chat_bubble_outline),
-              label: const Text('Open Chatbot Page'),
-              onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (context) => const ChatbotPage(),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_initError != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: Text(
+                    _initError!,
+                    style: const TextStyle(color: Colors.redAccent),
+                    textAlign: TextAlign.center,
                   ),
-                );
-              },
-            ),
-          ],
+                ),
+              if (!isReady && _initError == null) ...[
+                Text(_stageLabel(), textAlign: TextAlign.center),
+                const SizedBox(height: 12),
+                if (_stage == _InitStage.modelDownload)
+                  SizedBox(
+                    width: 240,
+                    child: LinearProgressIndicator(value: _downloadProgress),
+                  )
+                else
+                  const CircularProgressIndicator(),
+                const SizedBox(height: 24),
+              ],
+              if (_authMessage != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: Text(
+                    _authMessage!,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color:
+                          _isGoogleAuthenticated
+                              ? Colors.greenAccent
+                              : Colors.orangeAccent,
+                    ),
+                  ),
+                ),
+              if (_isSigningIn)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 16),
+                  child: CircularProgressIndicator(),
+                ),
+              if (!_isGoogleAuthenticated && !isReady)
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.login),
+                  label: Text(
+                    _isGoogleAuthenticated
+                        ? 'Google Connected'
+                        : 'Sign in with Google',
+                  ),
+                  onPressed: _isSigningIn ? null : _ensureGoogleAuth,
+                ),
+              if (isReady &&
+                  _camera != null &&
+                  _cameraChat != null &&
+                  _detector != null)
+                Expanded(child: _screens[_selectedIndex]),
+              ChatbotPage(
+                chat: _chatbotChat!,
+                visionChat: _cameraChat!,
+                tts: _tts!,
+              ),
+              //       const SizedBox(height: 16),
+              //       ElevatedButton.icon(
+              //         icon: const Icon(Icons.camera_alt),
+              //         label: const Text('Open Camera Page'),
+              //         onPressed:
+              //             (isReady && _camera != null)
+              //                 ? () {
+              //                   Navigator.of(context).push(
+              //                     MaterialPageRoute<void>(
+              //                       builder:
+              //                           (context) =>
+              //                     ),
+              //                   );
+              //                 }
+              //                 : null,
+              //       ),
+              //       const SizedBox(height: 16),
+              //       ElevatedButton.icon(
+              //         icon: const Icon(Icons.chat_bubble_outline),
+              //         label: const Text('Open Chatbot Page'),
+              //         onPressed:
+              //             (isReady && _isGoogleAuthenticated)
+              //                 ? () {
+              //                   Navigator.of(context).push(
+              //                     MaterialPageRoute<void>(
+              //                       builder:
+              //                           (context) => ChatbotPage(chat: _chatbotChat!),
+              //                     ),
+              //                   );
+              //                 }
+              //                 : null,
+              //       ),
+            ],
+          ),
         ),
       ),
     );

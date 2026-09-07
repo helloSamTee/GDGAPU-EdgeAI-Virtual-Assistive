@@ -1,8 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:gdg_edge_ai/tool_handlers.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:flutter_gemma/flutter_gemma.dart';
 
 // A single message in the chat, from either the user or the bot.
 // Can carry text, an image, or both.
@@ -10,14 +14,24 @@ class ChatMessage {
   ChatMessage({required this.isUser, this.text, this.imagePath});
 
   final bool isUser;
-  final String? text;
+  String? text;
   final String? imagePath;
 }
 
-// A basic chatbot screen: user can type text and/or attach an image,
-// send it, and receive a dummy bot response.
+// A basic chatbot screen: user can type text and/or attach an image, and send it.
+// Chat screen wired to an InferenceChat that was created in main.dart with AppTools, all passed as its tools.
+// This page just drives the send/receive loop and lets ToolHandlers.handle execute whatever the model asks for.
 class ChatbotPage extends StatefulWidget {
-  const ChatbotPage({super.key});
+  const ChatbotPage({
+    super.key,
+    required this.chat,
+    required this.visionChat,
+    required this.tts,
+  });
+
+  final InferenceChat chat;
+  final InferenceChat visionChat;
+  final FlutterTts tts;
 
   @override
   State<ChatbotPage> createState() => _ChatbotPageState();
@@ -52,20 +66,28 @@ class _ChatbotPageState extends State<ChatbotPage> {
     setState(() => _pendingImagePath = null);
   }
 
-  // Placeholder for a real chatbot backend call. Currently just waits
-  // briefly and returns a canned response.
-  Future<String> _getDummyBotResponse(String? text, String? imagePath) async {
-    await Future.delayed(const Duration(milliseconds: 800));
-
-    if (imagePath != null && text != null && text.isNotEmpty) {
-      return "Thanks for the image and message! This is a dummy response — "
-          "real analysis isn't wired up yet.";
-    } else if (imagePath != null) {
-      return "Nice photo! This is a placeholder response for image-only "
-          "messages.";
-    } else {
-      return "This is a dummy response to: \"$text\"";
+  String _humanizeToolResult(Map<String, dynamic> result) {
+    if (result['error'] != null) return 'I could not complete that request.';
+    if (result['events'] is List) {
+      final events = result['events'] as List;
+      if (events.isEmpty) return 'You have no events on that date.';
+      final descriptions = events
+          .map((event) {
+            final item = event as Map<String, dynamic>;
+            return '${item['title']} at ${item['start'] ?? 'an unspecified time'}';
+          })
+          .join('; ');
+      return 'Your events are: $descriptions.';
     }
+    if (result['status'] == 'empty') return result['message'] as String;
+    if (result['status'] == 'created') {
+      return 'I created the calendar event "${result['summary']}".';
+    }
+    if (result['subject'] != null) {
+      return 'Your latest email is from ${result['from']}, with subject '
+          '"${result['subject']}". ${result['snippet']}';
+    }
+    return 'The request completed successfully.';
   }
 
   Future<void> _sendMessage() async {
@@ -73,6 +95,7 @@ class _ChatbotPageState extends State<ChatbotPage> {
     final imagePath = _pendingImagePath;
 
     if (text.isEmpty && imagePath == null) return;
+    if (_isBotTyping) return;
 
     setState(() {
       _messages.add(
@@ -89,18 +112,119 @@ class _ChatbotPageState extends State<ChatbotPage> {
     _clearPendingImage();
     _scrollToBottom();
 
-    final responseText = await _getDummyBotResponse(
-      text.isEmpty ? null : text,
-      imagePath,
-    );
+    // Placeholder bot message that gets filled in as tokens stream in.
+    var botMessage = ChatMessage(isUser: false, text: '');
+    setState(() => _messages.add(botMessage));
 
-    if (!mounted) return;
+    try {
+      final imageBytes =
+          imagePath == null ? null : await File(imagePath).readAsBytes();
 
-    setState(() {
-      _isBotTyping = false;
-      _messages.add(ChatMessage(isUser: false, text: responseText));
-    });
-    _scrollToBottom();
+      debugPrint('Image path: $imagePath');
+      debugPrint('Image bytes: ${imageBytes?.length ?? 0}');
+
+      final message =
+          imageBytes == null
+              ? Message.text(text: text, isUser: true)
+              : Message.withImage(
+                text:
+                    text.isEmpty
+                        ? 'Describe the attached image. Name the main objects.'
+                        : text,
+                imageBytes: imageBytes,
+                isUser: true,
+              );
+
+      // final message =
+      //     imagePath != null
+      //         ? Message.withImage(
+      //           text: text.isEmpty ? 'Describe this image.' : text,
+      //           imageBytes: await File(imagePath).readAsBytes(),
+      //           isUser: true,
+      //         )
+      //         : Message.text(text: text, isUser: true);
+
+      final activeChat = imageBytes == null ? widget.chat : widget.visionChat;
+      await activeChat.addQueryChunk(message);
+
+      Map<String, dynamic>? lastToolResult;
+      var toolWasCalled = false;
+      final stream =
+          imageBytes == null
+              ? widget.chat.generateChatResponseWithTools(
+                onToolCall: (call) async {
+                  toolWasCalled = true;
+                  final result = await ToolHandlers.handle(call);
+                  lastToolResult = result;
+                  return result;
+                },
+                maxToolTurns: 8,
+              )
+              : widget.visionChat.generateChatResponseAsync();
+
+      // await for (final response in stream) {
+      //   if (response is TextResponse) {
+      //     setState(() {
+      //       botMessage.text = (botMessage.text ?? '') + response.token;
+      //     });
+      //     _scrollToBottom();
+      //   }
+      //   // Other ModelResponse variants (thinking tokens, tool-call events)
+      //   // can be handled here too if you want to surface "using a tool..."
+      //   // status in the UI.
+      // }
+      await for (final response in stream) {
+        if (response is TextResponse) {
+          final token = response.token;
+
+          // Safety net: never surface raw tool-call syntax to the user,
+          // even if a future/older SDK version fails to parse it.
+          final looksLikeToolCallLeak =
+              token.contains('<|tool_call') || token.contains('<tool_call|>');
+          if (looksLikeToolCallLeak) {
+            debugPrint('Suppressed raw tool-call token leak: $token');
+            continue;
+          }
+
+          setState(() {
+            botMessage.text = (botMessage.text ?? '') + token;
+          });
+          _scrollToBottom();
+          widget.tts.speak(botMessage.text?.trim() ?? '');
+        } else if (response is FunctionCallResponse) {
+          debugPrint('Tool call: ${response.name}(${response.args})');
+          setState(() {
+            botMessage.text = 'Using ${response.name}...';
+          });
+        }
+      }
+
+      final visibleText = botMessage.text?.trim() ?? '';
+      if (imageBytes == null &&
+          lastToolResult != null &&
+          (visibleText.isEmpty ||
+              toolWasCalled && visibleText.startsWith('Using '))) {
+        setState(() {
+          botMessage.text = _humanizeToolResult(lastToolResult!);
+        });
+      } else if (imageBytes == null && visibleText.startsWith('{')) {
+        try {
+          final decoded = jsonDecode(visibleText);
+          if (decoded is Map<String, dynamic>) {
+            setState(() => botMessage.text = _humanizeToolResult(decoded));
+          }
+        } on FormatException {
+          // Leave ordinary model text unchanged.
+        }
+      }
+    } catch (e) {
+      setState(() {
+        botMessage.text = 'Something went wrong: $e';
+      });
+    } finally {
+      setState(() => _isBotTyping = false);
+      _scrollToBottom();
+    }
   }
 
   void _scrollToBottom() {
@@ -237,8 +361,15 @@ class _ChatbotPageState extends State<ChatbotPage> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.send),
-                    onPressed: _sendMessage,
+                    icon:
+                        _isBotTyping
+                            ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                            : const Icon(Icons.send),
+                    onPressed: _isBotTyping ? null : _sendMessage,
                   ),
                 ],
               ),

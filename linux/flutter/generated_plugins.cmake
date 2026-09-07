@@ -4,9 +4,14 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   file_selector_linux
+  flutter_gemma
+  object_detection
+  url_launcher_linux
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST
+  flutter_litert
+  jni
 )
 
 set(PLUGIN_BUNDLED_LIBRARIES)

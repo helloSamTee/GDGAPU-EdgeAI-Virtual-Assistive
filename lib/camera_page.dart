@@ -1,16 +1,29 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_gemma/flutter_gemma.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:object_detection/object_detection.dart';
 
 // A screen that allows users to take a picture using a given camera,
 // and then runs a dummy "action" against the captured image
 // (e.g. a stand-in for an upload / classification call).
 class CameraPage extends StatefulWidget {
-  const CameraPage({super.key, required this.camera});
+  const CameraPage({
+    super.key,
+    required this.camera,
+    required this.detector,
+    required this.chat,
+    required this.tts,
+  });
 
   final CameraDescription camera;
+  final ObjectDetector detector;
+  final InferenceChat chat;
+  final FlutterTts tts;
 
   @override
   State<CameraPage> createState() => _CameraPageState();
@@ -37,13 +50,64 @@ class _CameraPageState extends State<CameraPage> {
     super.dispose();
   }
 
-  // Placeholder for whatever real action should happen after capture
-  // (e.g. uploading the photo, running it through a model, attaching it
-  // to a flood report). Currently just simulates a short delay and
-  // returns a dummy result string.
-  Future<String> _performActionOnImage(String imagePath) async {
-    await Future.delayed(const Duration(seconds: 1));
-    return 'Dummy action complete for image at $imagePath';
+  String _formatDetectionSummary(List<DetectedObject> detections) {
+    if (detections.isEmpty) {
+      return 'No objects detected.';
+    }
+
+    final labels = <String>[];
+    for (final obj in detections) {
+      final label = obj.categoryName;
+      final confidence = (obj.score * 100).toStringAsFixed(1);
+      labels.add('$label ($confidence% confidence)');
+    }
+
+    return labels.join(', ');
+  }
+
+  Future<(String, String?, List<DetectedObject>)> _performActionOnImage(
+    Future<Uint8List> imageBytes,
+  ) async {
+    final detectedBytes = await imageBytes;
+    final detections = await widget.detector.detect(detectedBytes);
+
+    final detectionSummary = _formatDetectionSummary(detections);
+    debugPrint('Camera image bytes: ${detectedBytes.length}');
+
+    final inferencePrompt =
+        'I detected these objects in the image: $detectionSummary. '
+        'Describe the scene briefly, mention any visible text, and explain '
+        'what is most important to a visually impaired user.';
+
+    await widget.chat.addQueryChunk(
+      // Message.text(text: inferencePrompt, isUser: true),
+      Message.withImage(
+        text: inferencePrompt,
+        imageBytes: detectedBytes,
+        isUser: true,
+      ),
+    );
+
+    final stream = widget.chat.generateChatResponseAsync();
+    String response = '';
+    await for (final modelResponse in stream) {
+      if (modelResponse is TextResponse) {
+        response += modelResponse.token;
+      }
+    }
+
+    if (response.isNotEmpty) {
+      debugPrint('Model Response: $response');
+    } else {
+      debugPrint('No response from model.');
+    }
+
+    final resultMessage =
+        detections.isEmpty
+            ? 'No objects detected.'
+            : 'Detected objects: $detectionSummary.';
+
+    return (resultMessage, response, detections);
   }
 
   Future<void> _onCapturePressed() async {
@@ -55,11 +119,16 @@ class _CameraPageState extends State<CameraPage> {
       setState(() => _isProcessing = true);
 
       final image = await _controller.takePicture();
-      final resultMessage = await _performActionOnImage(image.path);
+      final (
+        resultMessage,
+        ttsMessage,
+        detections,
+      ) = await _performActionOnImage(image.readAsBytes());
 
       if (!mounted) return;
 
       setState(() => _isProcessing = false);
+      widget.tts.speak(ttsMessage ?? resultMessage);
 
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
@@ -67,6 +136,8 @@ class _CameraPageState extends State<CameraPage> {
               (context) => DisplayPictureScreen(
                 imagePath: image.path,
                 actionResult: resultMessage,
+                ttsMessage: ttsMessage,
+                detections: detections,
               ),
         ),
       );
@@ -116,10 +187,14 @@ class DisplayPictureScreen extends StatelessWidget {
     super.key,
     required this.imagePath,
     required this.actionResult,
+    required this.ttsMessage,
+    required this.detections,
   });
 
   final String imagePath;
   final String actionResult;
+  final String? ttsMessage;
+  final List<DetectedObject> detections;
 
   @override
   Widget build(BuildContext context) {
@@ -127,7 +202,62 @@ class DisplayPictureScreen extends StatelessWidget {
       appBar: AppBar(title: const Text('Display the Picture')),
       body: Column(
         children: [
-          Expanded(child: Image.file(File(imagePath))),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final imageFile = File(imagePath);
+
+                if (detections.isEmpty) {
+                  return Center(
+                    child: Image.file(imageFile, fit: BoxFit.contain),
+                  );
+                }
+
+                final originalSize = detections.first.originalSize;
+                final fitted = applyBoxFit(
+                  BoxFit.contain,
+                  originalSize,
+                  Size(constraints.maxWidth, constraints.maxHeight),
+                );
+                final renderSize = fitted.destination;
+                final imageRect = Alignment.center.inscribe(
+                  renderSize,
+                  Offset.zero &
+                      Size(constraints.maxWidth, constraints.maxHeight),
+                );
+
+                return Stack(
+                  children: [
+                    Positioned.fromRect(
+                      rect: imageRect,
+                      child: Image.file(
+                        imageFile,
+                        fit: BoxFit.fill,
+                        gaplessPlayback: true,
+                      ),
+                    ),
+                    Positioned.fromRect(
+                      rect: imageRect,
+                      child: CustomPaint(
+                        painter: DetectionsPainter(
+                          detections: detections,
+                          imageRectOnCanvas: Rect.fromLTWH(
+                            0,
+                            0,
+                            imageRect.width,
+                            imageRect.height,
+                          ),
+                          originalImageSize: originalSize,
+                          showBoundingBoxes: true,
+                          showLabels: true,
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: Text(
