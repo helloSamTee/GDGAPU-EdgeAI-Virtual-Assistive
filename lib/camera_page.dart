@@ -4,7 +4,7 @@ import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_gemma/flutter_gemma.dart';
+import 'package:flutter_gemma_agent/flutter_gemma_agent.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:object_detection/object_detection.dart';
 
@@ -16,13 +16,13 @@ class CameraPage extends StatefulWidget {
     super.key,
     required this.camera,
     required this.detector,
-    required this.chat,
+    required this.agent,
     required this.tts,
   });
 
   final CameraDescription camera;
   final ObjectDetector detector;
-  final InferenceChat chat;
+  final AgentSession agent;
   final FlutterTts tts;
 
   @override
@@ -77,22 +77,19 @@ class _CameraPageState extends State<CameraPage> {
     final inferencePrompt =
         'I detected these objects in the image: $detectionSummary. '
         'Describe the scene briefly, mention any visible text, and explain '
-        'what is most important to a visually impaired user.';
+        'what is most important to a visually impaired user in 3 to 5 sentences only.';
 
-    await widget.chat.addQueryChunk(
-      // Message.text(text: inferencePrompt, isUser: true),
-      Message.withImage(
-        text: inferencePrompt,
-        imageBytes: detectedBytes,
-        isUser: true,
-      ),
-    );
-
-    final stream = widget.chat.generateChatResponseAsync();
     String response = '';
-    await for (final modelResponse in stream) {
-      if (modelResponse is TextResponse) {
-        response += modelResponse.token;
+    await for (final event in widget.agent.ask(
+      inferencePrompt,
+      imageBytes: detectedBytes,
+    )) {
+      if (event is TextChunkEvent) {
+        response += event.text;
+      }
+      // You can optionally handle other events here, like ToolCallEvent
+      else if (event is ToolCallEvent) {
+        print('Bot is calling tool: ${event.toolName}');
       }
     }
 

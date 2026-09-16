@@ -1,12 +1,11 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_gemma_agent/flutter_gemma_agent.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:gdg_edge_ai/tool_handlers.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:flutter_gemma/flutter_gemma.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 
 // A single message in the chat, from either the user or the bot.
 // Can carry text, an image, or both.
@@ -22,15 +21,9 @@ class ChatMessage {
 // Chat screen wired to an InferenceChat that was created in main.dart with AppTools, all passed as its tools.
 // This page just drives the send/receive loop and lets ToolHandlers.handle execute whatever the model asks for.
 class ChatbotPage extends StatefulWidget {
-  const ChatbotPage({
-    super.key,
-    required this.chat,
-    required this.visionChat,
-    required this.tts,
-  });
+  const ChatbotPage({super.key, required this.agent, required this.tts});
 
-  final InferenceChat chat;
-  final InferenceChat visionChat;
+  final AgentSession agent;
   final FlutterTts tts;
 
   @override
@@ -41,15 +34,64 @@ class _ChatbotPageState extends State<ChatbotPage> {
   final List<ChatMessage> _messages = [];
   final TextEditingController _textController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  final ImagePicker _imagePicker = ImagePicker();
 
+  // Speech to Text variables
+  final SpeechToText _speechToText = SpeechToText();
+  bool _speechEnabled = false;
+  bool _isListening = false;
+
+  final ImagePicker _imagePicker = ImagePicker();
   String? _pendingImagePath;
   bool _isBotTyping = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initSpeech(); // Initialize speech recognition
+  }
+
+  // Initialize the speech-to-text service
+  void _initSpeech() async {
+    _speechEnabled = await _speechToText.initialize(
+      onStatus: (status) {
+        if (status == 'done' || status == 'notListening') {
+          if (mounted) setState(() => _isListening = false);
+        }
+      },
+      onError: (errorNotification) {
+        print('Speech recognition error: $errorNotification');
+        if (mounted) setState(() => _isListening = false);
+      },
+    );
+    if (mounted) setState(() {});
+  }
+
+  // Start listening to the microphone
+  void _startListening() async {
+    await _speechToText.listen(
+      onResult: (result) {
+        if (mounted) {
+          setState(() {
+            // Update the text field with the recognized words
+            _textController.text = result.recognizedWords;
+          });
+        }
+      },
+    );
+    setState(() => _isListening = true);
+  }
+
+  // Stop listening
+  void _stopListening() async {
+    await _speechToText.stop();
+    setState(() => _isListening = false);
+  }
 
   @override
   void dispose() {
     _textController.dispose();
     _scrollController.dispose();
+    _speechToText.cancel();
     super.dispose();
   }
 
@@ -66,36 +108,17 @@ class _ChatbotPageState extends State<ChatbotPage> {
     setState(() => _pendingImagePath = null);
   }
 
-  String _humanizeToolResult(Map<String, dynamic> result) {
-    if (result['error'] != null) return 'I could not complete that request.';
-    if (result['events'] is List) {
-      final events = result['events'] as List;
-      if (events.isEmpty) return 'You have no events on that date.';
-      final descriptions = events
-          .map((event) {
-            final item = event as Map<String, dynamic>;
-            return '${item['title']} at ${item['start'] ?? 'an unspecified time'}';
-          })
-          .join('; ');
-      return 'Your events are: $descriptions.';
-    }
-    if (result['status'] == 'empty') return result['message'] as String;
-    if (result['status'] == 'created') {
-      return 'I created the calendar event "${result['summary']}".';
-    }
-    if (result['subject'] != null) {
-      return 'Your latest email is from ${result['from']}, with subject '
-          '"${result['subject']}". ${result['snippet']}';
-    }
-    return 'The request completed successfully.';
-  }
-
   Future<void> _sendMessage() async {
     final text = _textController.text.trim();
     final imagePath = _pendingImagePath;
 
     if (text.isEmpty && imagePath == null) return;
     if (_isBotTyping) return;
+
+    // Stop listening if the user manually hits send while talking
+    if (_isListening) {
+      _stopListening();
+    }
 
     setState(() {
       _messages.add(
@@ -112,7 +135,6 @@ class _ChatbotPageState extends State<ChatbotPage> {
     _clearPendingImage();
     _scrollToBottom();
 
-    // Placeholder bot message that gets filled in as tokens stream in.
     var botMessage = ChatMessage(isUser: false, text: '');
     setState(() => _messages.add(botMessage));
 
@@ -120,107 +142,34 @@ class _ChatbotPageState extends State<ChatbotPage> {
       final imageBytes =
           imagePath == null ? null : await File(imagePath).readAsBytes();
 
-      debugPrint('Image path: $imagePath');
-      debugPrint('Image bytes: ${imageBytes?.length ?? 0}');
+      // ask() needs non-empty text even for an image-only send.
+      final prompt =
+          text.isEmpty
+              ? 'Describe the attached image. Name the main objects.'
+              : text;
 
-      final message =
-          imageBytes == null
-              ? Message.text(text: text, isUser: true)
-              : Message.withImage(
-                text:
-                    text.isEmpty
-                        ? 'Describe the attached image. Name the main objects.'
-                        : text,
-                imageBytes: imageBytes,
-                isUser: true,
-              );
-
-      // final message =
-      //     imagePath != null
-      //         ? Message.withImage(
-      //           text: text.isEmpty ? 'Describe this image.' : text,
-      //           imageBytes: await File(imagePath).readAsBytes(),
-      //           isUser: true,
-      //         )
-      //         : Message.text(text: text, isUser: true);
-
-      final activeChat = imageBytes == null ? widget.chat : widget.visionChat;
-      await activeChat.addQueryChunk(message);
-
-      Map<String, dynamic>? lastToolResult;
-      var toolWasCalled = false;
-      final stream =
-          imageBytes == null
-              ? widget.chat.generateChatResponseWithTools(
-                onToolCall: (call) async {
-                  toolWasCalled = true;
-                  final result = await ToolHandlers.handle(call);
-                  lastToolResult = result;
-                  return result;
-                },
-                maxToolTurns: 8,
-              )
-              : widget.visionChat.generateChatResponseAsync();
-
-      // await for (final response in stream) {
-      //   if (response is TextResponse) {
-      //     setState(() {
-      //       botMessage.text = (botMessage.text ?? '') + response.token;
-      //     });
-      //     _scrollToBottom();
-      //   }
-      //   // Other ModelResponse variants (thinking tokens, tool-call events)
-      //   // can be handled here too if you want to surface "using a tool..."
-      //   // status in the UI.
-      // }
-      await for (final response in stream) {
-        if (response is TextResponse) {
-          final token = response.token;
-
-          // Safety net: never surface raw tool-call syntax to the user,
-          // even if a future/older SDK version fails to parse it.
-          final looksLikeToolCallLeak =
-              token.contains('<|tool_call') || token.contains('<tool_call|>');
-          if (looksLikeToolCallLeak) {
-            debugPrint('Suppressed raw tool-call token leak: $token');
-            continue;
-          }
-
+      await for (final event in widget.agent.ask(
+        prompt,
+        imageBytes: imageBytes,
+      )) {
+        if (event is TextChunkEvent) {
           setState(() {
-            botMessage.text = (botMessage.text ?? '') + token;
+            botMessage.text = (botMessage.text ?? '') + event.text;
           });
           _scrollToBottom();
-          widget.tts.speak(botMessage.text?.trim() ?? '');
-        } else if (response is FunctionCallResponse) {
-          debugPrint('Tool call: ${response.name}(${response.args})');
-          setState(() {
-            botMessage.text = 'Using ${response.name}...';
-          });
+        }
+        // You can optionally handle other events here, like ToolCallEvent
+        else if (event is ToolCallEvent) {
+          print('Bot is calling tool: ${event.toolName}');
         }
       }
 
-      final visibleText = botMessage.text?.trim() ?? '';
-      if (imageBytes == null &&
-          lastToolResult != null &&
-          (visibleText.isEmpty ||
-              toolWasCalled && visibleText.startsWith('Using '))) {
-        setState(() {
-          botMessage.text = _humanizeToolResult(lastToolResult!);
-        });
-      } else if (imageBytes == null && visibleText.startsWith('{')) {
-        try {
-          final decoded = jsonDecode(visibleText);
-          if (decoded is Map<String, dynamic>) {
-            setState(() => botMessage.text = _humanizeToolResult(decoded));
-          }
-        } on FormatException {
-          // Leave ordinary model text unchanged.
-        }
+      // 2. Speak the COMPLETE message only after the stream is fully finished
+      if (botMessage.text != null && botMessage.text!.isNotEmpty) {
+        await widget.tts.speak(botMessage.text!.trim());
       }
     } catch (e) {
-      setState(() {
-        botMessage.text = 'Something went wrong: $e';
-      });
+      setState(() => botMessage.text = 'Something went wrong: $e');
     } finally {
       setState(() => _isBotTyping = false);
       _scrollToBottom();
@@ -345,6 +294,13 @@ class _ChatbotPageState extends State<ChatbotPage> {
                     icon: const Icon(Icons.image_outlined),
                     onPressed: _pickImage,
                   ),
+                  if (_speechEnabled)
+                    IconButton(
+                      icon: Icon(_isListening ? Icons.mic : Icons.mic_none),
+                      color: _isListening ? Colors.redAccent : null,
+                      onPressed:
+                          _isListening ? _stopListening : _startListening,
+                    ),
                   Expanded(
                     child: TextField(
                       controller: _textController,

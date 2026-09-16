@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gemma/flutter_gemma.dart';
@@ -5,11 +7,14 @@ import 'package:flutter_gemma_litertlm/flutter_gemma_litertlm.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:object_detection/object_detection.dart';
+import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter_gemma_agent/flutter_gemma_agent.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
-import 'app_tools.dart';
 import 'camera_page.dart';
 import 'chatbot_page.dart';
 import 'google_auth_service.dart';
+import 'mcp/list_events_mcp_server.dart';
 
 const String _modelUrl =
     'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/'
@@ -21,7 +26,7 @@ Future<void> main() async {
 
   // initialize() just registers the plugin/engine — it does not download or
   // load anything, so it's safe (and fast) to await before runApp.
-  const hfToken = String.fromEnvironment('HUGGINGFACE_TOKEN');
+  final hfToken = dotenv.env['HUGGINGFACE_TOKEN'] ?? '';
   await FlutterGemma.initialize(
     inferenceEngines: const [LiteRtLmEngine()],
     huggingFaceToken: hfToken.isNotEmpty ? hfToken : null,
@@ -61,10 +66,9 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _initError;
 
   CameraDescription? _camera;
-  InferenceChat? _cameraChat;
-  InferenceChat? _chatbotChat;
   ObjectDetector? _detector;
   FlutterTts? _tts;
+  AgentSession? _agentSession;
 
   bool _isSigningIn = false;
   bool _isGoogleAuthenticated = false;
@@ -76,15 +80,16 @@ class _HomeScreenState extends State<HomeScreen> {
     CameraPage(
       camera: _camera!,
       detector: _detector!,
-      chat: _cameraChat!,
+      agent: _agentSession!,
       tts: _tts!,
     ),
-    ChatbotPage(chat: _chatbotChat!, visionChat: _cameraChat!, tts: _tts!),
+    ChatbotPage(agent: _agentSession!, tts: _tts!),
   ];
 
   @override
   void initState() {
     super.initState();
+    _ensureGoogleAuth(); // Start Google auth early, but don't block the UI
     _initEverything();
   }
 
@@ -100,22 +105,62 @@ class _HomeScreenState extends State<HomeScreen> {
       });
 
       final hfToken = dotenv.env['HUGGINGFACE_TOKEN'];
-      // install() is idempotent: it skips an existing download and restores
-      // the active model identity needed by getActiveModel().
-      await FlutterGemma.installModel(
-            modelType: ModelType.gemma4,
-            fileType: ModelFileType.litertlm,
-          )
-          .fromNetwork(
-            _modelUrl,
-            token: hfToken?.isNotEmpty == true ? hfToken : null,
-          )
-          .withProgress((progress) {
-            if (mounted) {
-              setState(() => _downloadProgress = progress / 100);
+
+      // ADDITION: Implement a retry loop to survive WorkManager interruptions
+      bool modelDownloaded = false;
+      int retryCount = 0;
+      const maxRetries = 5;
+
+      // Turn on the wakelock to keep the screen on
+      await WakelockPlus.enable();
+
+      try {
+        while (!modelDownloaded && retryCount < maxRetries) {
+          try {
+            // install() is idempotent: it skips an existing download and restores
+            // the active model identity needed by getActiveModel().
+            await FlutterGemma.installModel(
+                  modelType: ModelType.gemma4,
+                  fileType: ModelFileType.litertlm,
+                )
+                .fromNetwork(
+                  _modelUrl,
+                  token: hfToken?.isNotEmpty == true ? hfToken : null,
+                )
+                .withProgress((progress) {
+                  if (mounted) {
+                    setState(() => _downloadProgress = progress / 100);
+                  }
+                })
+                .install();
+
+            modelDownloaded = true; // Success! Break the loop.
+          } catch (e) {
+            final errorStr = e.toString().toLowerCase();
+            if (errorStr.contains('canceled') ||
+                errorStr.contains('cancelled')) {
+              retryCount++;
+              print(
+                'Download interrupted by OS. Resuming (Attempt $retryCount of $maxRetries)...',
+              );
+              // Give the OS WorkManager a brief moment to reschedule before re-attaching
+              await Future.delayed(const Duration(seconds: 2));
+            } else {
+              // If it's a different error (like 401 Unauthorized), throw it normally
+              rethrow;
             }
-          })
-          .install();
+          }
+        }
+
+        if (!modelDownloaded) {
+          throw Exception(
+            'Failed to download model after $maxRetries attempts.',
+          );
+        }
+      } finally {
+        // Turn off the wakelock after the download attempt
+        await WakelockPlus.disable();
+      }
 
       setState(() => _stage = _InitStage.modelLoad);
 
@@ -131,26 +176,76 @@ class _HomeScreenState extends State<HomeScreen> {
         maxNumImages: 1,
       );
 
-      _cameraChat = await model.openChat(
-        systemInstruction:
-            'Given the list of detected objects, you describe what is in a photo concisely for a visually '
-            'impaired user, and read aloud any visible text in the image.',
+      unawaited(
+        startListEventsMcpServer(),
+      ); // fire-and-forget; runs for app lifetime
+
+      final source = AssetSkillSource();
+      final loadedSkills = await source.load();
+
+      // ADD THIS LINE to check your console:
+      print('🚀 Successfully loaded ${loadedSkills.length} starter skills!');
+      print('Loaded skills: ${loadedSkills.map((s) => s.name).join(", ")}');
+
+      final registry = SkillRegistry();
+
+      // // Loop through all discovered skills and register them
+      // for (final skill in loadedSkills) {
+      //   if (skill.name == 'list-events') {
+      //     // Only enable your custom MCP skill if Google is authenticated
+      //     registry.add(skill, selected: _isGoogleAuthenticated);
+      //   } else {
+      //     // Enable all the normal built-in JS skills by default
+      //     registry.add(skill, selected: true);
+      //   }
+      // }
+
+      registry.addAll(await source.load(), selected: true);
+
+      // 2. Add your custom MCP skill manually (since it requires auth logic)
+      final customSkillText = await rootBundle.loadString(
+        'assets/skills/list-events/SKILL.md',
       );
 
-      _chatbotChat = await model.openChat(
-        tools: AppTools.all,
-        supportsFunctionCalls: true,
-        systemInstruction: '''
-            You are a helpful assistant.
-
-            When a request requires calendar or email data, use the registered tools.
-            Never show tool-call JSON to the user.
-            Never show raw tool-result JSON to the user.
-            After a tool returns, explain the result in clear, natural language.
-
-            For image questions, inspect the attached image and describe what you see.
-            ''',
+      registry.add(
+        parseSkillMd(customSkillText),
+        selected: _isGoogleAuthenticated,
       );
+
+      _agentSession = await AgentSession.fromModel(
+        model,
+        registry: registry,
+        supportImage: true,
+        executors: [
+          TextSkillExecutor(),
+          JsSkillExecutor(
+            sourceFor: source.jsSkillSourceFor,
+          ), // Runs the starter bundle skills
+          NativeIntentExecutor(),
+          McpSkillExecutor(), // Runs your list-events skill
+        ],
+      );
+
+      // _cameraChat = await model.openChat(
+      //   systemInstruction:
+      //       'Given the list of detected objects, you describe what is in a photo concisely for a visually '
+      //       'impaired user, and read aloud any visible text in the image.',
+      // );
+
+      // _chatbotChat = await model.openChat(
+      //   tools: AppTools.all,
+      //   supportsFunctionCalls: true,
+      //   systemInstruction: '''
+      //       You are a helpful assistant.
+
+      //       When a request requires calendar or email data, use the registered tools.
+      //       Never show tool-call JSON to the user.
+      //       Never show raw tool-result JSON to the user.
+      //       After a tool returns, explain the result in clear, natural language.
+
+      //       For image questions, inspect the attached image and describe what you see.
+      //       ''',
+      // );
 
       setState(() => _stage = _InitStage.detector);
       _detector = await ObjectDetector.create();
@@ -182,6 +277,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _isSigningIn = false;
         _authMessage = 'Google connected';
       });
+      _agentSession?.registry.select('list-events');
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -273,7 +369,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   padding: EdgeInsets.only(bottom: 16),
                   child: CircularProgressIndicator(),
                 ),
-              if (!_isGoogleAuthenticated && !isReady)
+              if (!_isGoogleAuthenticated)
                 ElevatedButton.icon(
                   icon: const Icon(Icons.login),
                   label: Text(
@@ -285,14 +381,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               if (isReady &&
                   _camera != null &&
-                  _cameraChat != null &&
+                  _agentSession != null &&
                   _detector != null)
                 Expanded(child: _screens[_selectedIndex]),
-              ChatbotPage(
-                chat: _chatbotChat!,
-                visionChat: _cameraChat!,
-                tts: _tts!,
-              ),
+              // ChatbotPage(agent: _agentSession!, tts: _tts!),
               //       const SizedBox(height: 16),
               //       ElevatedButton.icon(
               //         icon: const Icon(Icons.camera_alt),

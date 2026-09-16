@@ -49,6 +49,10 @@ dependencies:
   flutter_gemma: ^1.7.0
   flutter_dotenv: ^6.0.1
   flutter_gemma_litertlm: ^1.6.1
+  flutter_gemma_agent: ^0.2.5
+  mcp_dart: ^2.4.2
+  wakelock_plus: ^1.8.0
+  speech_to_text: ^7.5.0
 
 dev_dependencies:
   flutter_test:
@@ -75,6 +79,15 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - .env
+    - assets/skills/list-events/
+    - assets/skills/calculate-hash/
+    - assets/skills/interactive-map/
+    - assets/skills/kitchen-adventure/
+    - assets/skills/mood-tracker/SKILL.md
+    - assets/skills/qr-code/SKILL.md
+    - assets/skills/query-wikipedia/SKILL.md
+    - assets/skills/send-email/SKILL.md
+    - assets/skills/text-spinner/SKILL.md
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
 
