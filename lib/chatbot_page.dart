@@ -178,6 +178,11 @@ class _ChatbotPageState extends State<ChatbotPage> {
         // You can optionally handle other events here, like ToolCallEvent
         else if (event is ToolCallEvent) {
           print('Bot is calling tool: ${event.toolName}');
+          setState(() {
+            botMessage.text =
+                (botMessage.text ?? '') + '\n[Checking ${event.toolName}...]\n';
+          });
+          _scrollToBottom();
         }
       }
 

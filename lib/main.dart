@@ -6,6 +6,8 @@ import 'package:flutter_gemma/flutter_gemma.dart';
 import 'package:flutter_gemma_litertlm/flutter_gemma_litertlm.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:gdg_edge_ai/test_list_events.dart';
+import 'package:gdg_edge_ai/tool_handlers.dart';
 import 'package:object_detection/object_detection.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_gemma_agent/flutter_gemma_agent.dart';
@@ -14,8 +16,6 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import 'camera_page.dart';
 import 'chatbot_page.dart';
 import 'google_auth_service.dart';
-import 'mcp/list_events_mcp_server.dart';
-import 'test_list_events.dart'; // Import the TestCalendarPage
 
 const String _modelUrl =
     'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/'
@@ -23,13 +23,15 @@ const String _modelUrl =
 
 const _localSkillNames = [
   'list-events',
+  'create-calendar-event',
+  'read-latest-email',
   // 'calculate-hash',
   // 'interactive-map',
   'kitchen-adventure',
   // 'mood-tracker',
   // 'qr-code',
   // 'query-wikipedia',
-  'send-email',
+  // 'send-email',
   // 'text-spinner',
 ];
 
@@ -194,8 +196,6 @@ class _HomeScreenState extends State<HomeScreen> {
         maxNumImages: 1,
       );
 
-      await startListEventsMcpServer();
-
       // final source = AssetSkillSource();
       // final loadedSkills = await source.load();
 
@@ -203,50 +203,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
       setState(() => _stage = _InitStage.detector);
       _detector = await ObjectDetector.create();
-
-      // // Loop through all discovered skills and register them
-      // for (final skill in loadedSkills) {
-      //   if (skill.name == 'list-events') {
-      //     // Only enable your custom MCP skill if Google is authenticated
-      //     registry.add(skill, selected: _isGoogleAuthenticated);
-      //   } else {
-      //     // Enable all the normal built-in JS skills by default
-      //     registry.add(skill, selected: true);
-      //   }
-      // }
-
-      // registry.addAll(loadedSkills, selected: true);
-
-      // // 2. Add your custom MCP skill manually (since it requires auth logic)
-      // final customSkillText = await rootBundle.loadString(
-      //   'assets/skills/list-events/SKILL.md',
-      // );
-
-      // registry.add(
-      //   parseSkillMd(customSkillText),
-      //   selected: _isGoogleAuthenticated,
-      // );
-
-      // _cameraChat = await model.openChat(
-      //   systemInstruction:
-      //       'Given the list of detected objects, you describe what is in a photo concisely for a visually '
-      //       'impaired user, and read aloud any visible text in the image.',
-      // );
-
-      // _chatbotChat = await model.openChat(
-      //   tools: AppTools.all,
-      //   supportsFunctionCalls: true,
-      //   systemInstruction: '''
-      //       You are a helpful assistant.
-
-      //       When a request requires calendar or email data, use the registered tools.
-      //       Never show tool-call JSON to the user.
-      //       Never show raw tool-result JSON to the user.
-      //       After a tool returns, explain the result in clear, natural language.
-
-      //       For image questions, inspect the attached image and describe what you see.
-      //       ''',
-      // );
 
       setState(() => _stage = _InitStage.detector);
       _detector = await ObjectDetector.create();
@@ -349,12 +305,13 @@ class _HomeScreenState extends State<HomeScreen> {
         JsSkillExecutor(sourceFor: _localJsSkillSourceFor),
         NativeIntentExecutor(),
         McpSkillExecutor(
-          clients: [
-            McpClient(
-              config: McpServerConfig(url: 'http://127.0.0.1:8765/mcp'),
-            ),
-          ],
+          // clients: [
+          //   McpClient(
+          //     config: McpServerConfig(url: 'http://127.0.0.1:8765/mcp'),
+          //   ),
+          // ],
         ),
+        LocalDartSkillExecutor(),
       ],
     );
 
@@ -363,7 +320,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ADD THIS METHOD: Called when the user clicks the "Trash" icon
+  // Called when the user clicks the "Trash" icon
   Future<void> _resetChat() async {
     // Show a quick loading state if you want, or just wait for it to recreate
     await _createAgentSession();
@@ -457,59 +414,26 @@ class _HomeScreenState extends State<HomeScreen> {
                   label: const Text('Sign in with Google'),
                   onPressed: _isSigningIn ? null : _ensureGoogleAuth,
                 ),
-              if (_isGoogleAuthenticated)
-                Padding(
-                  padding: const EdgeInsets.only(top: 16.0),
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.bug_report, color: Colors.orange),
-                    label: const Text('Open Calendar Sandbox'),
-                    onPressed: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => const TestCalendarPage(),
-                        ),
-                      );
-                    },
-                  ),
-                ),
+              // if (_isGoogleAuthenticated)
+              //   Padding(
+              //     padding: const EdgeInsets.only(top: 16.0),
+              //     child: OutlinedButton.icon(
+              //       icon: const Icon(Icons.bug_report, color: Colors.orange),
+              //       label: const Text('Open Calendar Sandbox'),
+              //       onPressed: () {
+              //         Navigator.of(context).push(
+              //           MaterialPageRoute(
+              //             builder: (context) => const TestCalendarPage(),
+              //           ),
+              //         );
+              //       },
+              //     ),
+              //   ),
               if (isReady &&
                   _camera != null &&
                   _agentSession != null &&
                   _detector != null)
                 Expanded(child: _screens[_selectedIndex]),
-              // ChatbotPage(agent: _agentSession!, tts: _tts!),
-              //       const SizedBox(height: 16),
-              //       ElevatedButton.icon(
-              //         icon: const Icon(Icons.camera_alt),
-              //         label: const Text('Open Camera Page'),
-              //         onPressed:
-              //             (isReady && _camera != null)
-              //                 ? () {
-              //                   Navigator.of(context).push(
-              //                     MaterialPageRoute<void>(
-              //                       builder:
-              //                           (context) =>
-              //                     ),
-              //                   );
-              //                 }
-              //                 : null,
-              //       ),
-              //       const SizedBox(height: 16),
-              //       ElevatedButton.icon(
-              //         icon: const Icon(Icons.chat_bubble_outline),
-              //         label: const Text('Open Chatbot Page'),
-              //         onPressed:
-              //             (isReady && _isGoogleAuthenticated)
-              //                 ? () {
-              //                   Navigator.of(context).push(
-              //                     MaterialPageRoute<void>(
-              //                       builder:
-              //                           (context) => ChatbotPage(chat: _chatbotChat!),
-              //                     ),
-              //                   );
-              //                 }
-              //                 : null,
-              //       ),
             ],
           ),
         ),

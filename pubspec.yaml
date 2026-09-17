@@ -80,20 +80,9 @@ flutter:
   assets:
     - .env
     - assets/skills/list-events/
-    - assets/skills/calculate-hash/
-    - assets/skills/calculate-hash/scripts/
-    - assets/skills/interactive-map/
-    - assets/skills/interactive-map/scripts/
+    - assets/skills/create-calendar-event/
+    - assets/skills/read-latest-email/
     - assets/skills/kitchen-adventure/
-    - assets/skills/mood-tracker/
-    - assets/skills/mood-tracker/scripts/
-    - assets/skills/qr-code/
-    - assets/skills/qr-code/scripts/
-    - assets/skills/query-wikipedia/
-    - assets/skills/query-wikipedia/scripts/
-    - assets/skills/send-email/
-    - assets/skills/text-spinner/
-    - assets/skills/text-spinner/scripts/
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
 
