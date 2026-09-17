@@ -49,7 +49,7 @@ dependencies:
   flutter_gemma: ^1.7.0
   flutter_dotenv: ^6.0.1
   flutter_gemma_litertlm: ^1.6.1
-  flutter_gemma_agent: ^0.2.5
+  flutter_gemma_agent: 0.2.5
   mcp_dart: ^2.4.2
   wakelock_plus: ^1.8.0
   speech_to_text: ^7.5.0
@@ -81,13 +81,19 @@ flutter:
     - .env
     - assets/skills/list-events/
     - assets/skills/calculate-hash/
+    - assets/skills/calculate-hash/scripts/
     - assets/skills/interactive-map/
+    - assets/skills/interactive-map/scripts/
     - assets/skills/kitchen-adventure/
-    - assets/skills/mood-tracker/SKILL.md
-    - assets/skills/qr-code/SKILL.md
-    - assets/skills/query-wikipedia/SKILL.md
-    - assets/skills/send-email/SKILL.md
-    - assets/skills/text-spinner/SKILL.md
+    - assets/skills/mood-tracker/
+    - assets/skills/mood-tracker/scripts/
+    - assets/skills/qr-code/
+    - assets/skills/qr-code/scripts/
+    - assets/skills/query-wikipedia/
+    - assets/skills/query-wikipedia/scripts/
+    - assets/skills/send-email/
+    - assets/skills/text-spinner/
+    - assets/skills/text-spinner/scripts/
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
 

@@ -21,10 +21,16 @@ class ChatMessage {
 // Chat screen wired to an InferenceChat that was created in main.dart with AppTools, all passed as its tools.
 // This page just drives the send/receive loop and lets ToolHandlers.handle execute whatever the model asks for.
 class ChatbotPage extends StatefulWidget {
-  const ChatbotPage({super.key, required this.agent, required this.tts});
+  const ChatbotPage({
+    super.key,
+    required this.agent,
+    required this.tts,
+    required this.onClearChat,
+  });
 
   final AgentSession agent;
   final FlutterTts tts;
+  final VoidCallback onClearChat;
 
   @override
   State<ChatbotPage> createState() => _ChatbotPageState();
@@ -108,6 +114,17 @@ class _ChatbotPageState extends State<ChatbotPage> {
     setState(() => _pendingImagePath = null);
   }
 
+  void _handleClearChat() {
+    // Clear the UI messages
+    setState(() {
+      _messages.clear();
+      _textController.clear();
+      _pendingImagePath = null;
+    });
+    // Tell HomeScreen to recreate the AgentSession (clearing the LLM's memory)
+    widget.onClearChat();
+  }
+
   Future<void> _sendMessage() async {
     final text = _textController.text.trim();
     final imagePath = _pendingImagePath;
@@ -169,7 +186,18 @@ class _ChatbotPageState extends State<ChatbotPage> {
         await widget.tts.speak(botMessage.text!.trim());
       }
     } catch (e) {
-      setState(() => botMessage.text = 'Something went wrong: $e');
+      final errorStr = e.toString();
+      setState(() {
+        // Intercept the token limit error and give a friendly message
+        if (errorStr.contains('FAILED_PRECONDITION') ||
+            errorStr.contains('Prefill input length')) {
+          botMessage.text =
+              'My memory is full! Please tap the trash icon in the top right to start a new conversation.';
+        } else {
+          botMessage.text = 'Something went wrong: $e';
+        }
+      });
+      print('Chat Error: $e');
     } finally {
       setState(() => _isBotTyping = false);
       _scrollToBottom();
@@ -231,7 +259,16 @@ class _ChatbotPageState extends State<ChatbotPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Chatbot')),
+      appBar: AppBar(
+        title: const Text('Chatbot'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            tooltip: 'Clear Chat',
+            onPressed: _handleClearChat,
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Expanded(

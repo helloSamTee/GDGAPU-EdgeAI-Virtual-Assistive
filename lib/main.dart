@@ -15,10 +15,23 @@ import 'camera_page.dart';
 import 'chatbot_page.dart';
 import 'google_auth_service.dart';
 import 'mcp/list_events_mcp_server.dart';
+import 'test_list_events.dart'; // Import the TestCalendarPage
 
 const String _modelUrl =
     'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/'
     'resolve/main/gemma-4-E2B-it.litertlm';
+
+const _localSkillNames = [
+  'list-events',
+  // 'calculate-hash',
+  // 'interactive-map',
+  'kitchen-adventure',
+  // 'mood-tracker',
+  // 'qr-code',
+  // 'query-wikipedia',
+  'send-email',
+  // 'text-spinner',
+];
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -68,6 +81,7 @@ class _HomeScreenState extends State<HomeScreen> {
   CameraDescription? _camera;
   ObjectDetector? _detector;
   FlutterTts? _tts;
+  dynamic _model;
   AgentSession? _agentSession;
 
   bool _isSigningIn = false;
@@ -83,14 +97,18 @@ class _HomeScreenState extends State<HomeScreen> {
       agent: _agentSession!,
       tts: _tts!,
     ),
-    ChatbotPage(agent: _agentSession!, tts: _tts!),
+    ChatbotPage(agent: _agentSession!, tts: _tts!, onClearChat: _resetChat),
   ];
 
   @override
   void initState() {
     super.initState();
-    _ensureGoogleAuth(); // Start Google auth early, but don't block the UI
-    _initEverything();
+    unawaited(_startInitialization());
+  }
+
+  Future<void> _startInitialization() async {
+    await _ensureGoogleAuth();
+    await _initEverything();
   }
 
   Future<void> _initEverything() async {
@@ -164,7 +182,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       setState(() => _stage = _InitStage.modelLoad);
 
-      final model = await FlutterGemma.getActiveModel(
+      _model = await FlutterGemma.getActiveModel(
         maxTokens: 4096,
         // The device's OpenCL LiteRT accelerator crashes while compiling this
         // model. CPU is slower, but keeps model startup inside Dart's error
@@ -176,18 +194,15 @@ class _HomeScreenState extends State<HomeScreen> {
         maxNumImages: 1,
       );
 
-      unawaited(
-        startListEventsMcpServer(),
-      ); // fire-and-forget; runs for app lifetime
+      await startListEventsMcpServer();
 
-      final source = AssetSkillSource();
-      final loadedSkills = await source.load();
+      // final source = AssetSkillSource();
+      // final loadedSkills = await source.load();
 
-      // ADD THIS LINE to check your console:
-      print('🚀 Successfully loaded ${loadedSkills.length} starter skills!');
-      print('Loaded skills: ${loadedSkills.map((s) => s.name).join(", ")}');
+      await _createAgentSession();
 
-      final registry = SkillRegistry();
+      setState(() => _stage = _InitStage.detector);
+      _detector = await ObjectDetector.create();
 
       // // Loop through all discovered skills and register them
       // for (final skill in loadedSkills) {
@@ -200,31 +215,17 @@ class _HomeScreenState extends State<HomeScreen> {
       //   }
       // }
 
-      registry.addAll(await source.load(), selected: true);
+      // registry.addAll(loadedSkills, selected: true);
 
-      // 2. Add your custom MCP skill manually (since it requires auth logic)
-      final customSkillText = await rootBundle.loadString(
-        'assets/skills/list-events/SKILL.md',
-      );
+      // // 2. Add your custom MCP skill manually (since it requires auth logic)
+      // final customSkillText = await rootBundle.loadString(
+      //   'assets/skills/list-events/SKILL.md',
+      // );
 
-      registry.add(
-        parseSkillMd(customSkillText),
-        selected: _isGoogleAuthenticated,
-      );
-
-      _agentSession = await AgentSession.fromModel(
-        model,
-        registry: registry,
-        supportImage: true,
-        executors: [
-          TextSkillExecutor(),
-          JsSkillExecutor(
-            sourceFor: source.jsSkillSourceFor,
-          ), // Runs the starter bundle skills
-          NativeIntentExecutor(),
-          McpSkillExecutor(), // Runs your list-events skill
-        ],
-      );
+      // registry.add(
+      //   parseSkillMd(customSkillText),
+      //   selected: _isGoogleAuthenticated,
+      // );
 
       // _cameraChat = await model.openChat(
       //   systemInstruction:
@@ -272,10 +273,13 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       await GoogleAuthService.instance.getAuthenticatedClient();
       if (!mounted) return;
+      final account = GoogleAuthService.instance.account;
       setState(() {
         _isGoogleAuthenticated = true;
         _isSigningIn = false;
-        _authMessage = 'Google connected';
+        _authMessage =
+            'Signed in as ${account?.displayName ?? account?.email ?? 'Google account'}'
+            '${account?.displayName != null ? '\n${account!.email}' : ''}';
       });
       _agentSession?.registry.select('list-events');
     } catch (error) {
@@ -286,6 +290,84 @@ class _HomeScreenState extends State<HomeScreen> {
         _authMessage = 'Google sign-in failed: $error';
       });
     }
+  }
+
+  Future<void> _switchGoogleAccount() async {
+    if (_isSigningIn) return;
+
+    try {
+      await GoogleAuthService.instance.signOut();
+      if (!mounted) return;
+      setState(() {
+        _isGoogleAuthenticated = false;
+        _authMessage = null;
+      });
+      await _ensureGoogleAuth();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isGoogleAuthenticated = false;
+        _authMessage = 'Google sign-out failed: $error';
+      });
+    }
+  }
+
+  Future<List<Skill>> _loadLocalSkills() async {
+    final skills = <Skill>[];
+    for (final name in _localSkillNames) {
+      final text = await rootBundle.loadString('assets/skills/$name/SKILL.md');
+      skills.add(parseSkillMd(text));
+    }
+    return skills;
+  }
+
+  JsSkillSource _localJsSkillSourceFor(Skill skill) {
+    // Extract the name from the Skill object and wrap the path in a JsSkillSource
+    return JsSkillSource.asset(
+      'assets/skills/${skill.name}/scripts/index.html',
+    );
+  }
+
+  Future<void> _createAgentSession() async {
+    final loadedSkills = await _loadLocalSkills();
+    final registry = SkillRegistry();
+
+    for (final skill in loadedSkills) {
+      if (skill.name == 'list-events') {
+        registry.add(skill, selected: _isGoogleAuthenticated);
+      } else {
+        registry.add(skill, selected: true);
+      }
+    }
+
+    _agentSession = await AgentSession.fromModel(
+      _model,
+      registry: registry,
+      supportImage: true,
+      executors: [
+        TextSkillExecutor(),
+        JsSkillExecutor(sourceFor: _localJsSkillSourceFor),
+        NativeIntentExecutor(),
+        McpSkillExecutor(
+          clients: [
+            McpClient(
+              config: McpServerConfig(url: 'http://127.0.0.1:8765/mcp'),
+            ),
+          ],
+        ),
+      ],
+    );
+
+    if (_isGoogleAuthenticated) {
+      _agentSession!.registry.select('list-events');
+    }
+  }
+
+  // ADD THIS METHOD: Called when the user clicks the "Trash" icon
+  Future<void> _resetChat() async {
+    // Show a quick loading state if you want, or just wait for it to recreate
+    await _createAgentSession();
+    setState(() {}); // Rebuild the UI so ChatbotPage gets the fresh agent
   }
 
   String _stageLabel() {
@@ -372,12 +454,23 @@ class _HomeScreenState extends State<HomeScreen> {
               if (!_isGoogleAuthenticated)
                 ElevatedButton.icon(
                   icon: const Icon(Icons.login),
-                  label: Text(
-                    _isGoogleAuthenticated
-                        ? 'Google Connected'
-                        : 'Sign in with Google',
-                  ),
+                  label: const Text('Sign in with Google'),
                   onPressed: _isSigningIn ? null : _ensureGoogleAuth,
+                ),
+              if (_isGoogleAuthenticated)
+                Padding(
+                  padding: const EdgeInsets.only(top: 16.0),
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.bug_report, color: Colors.orange),
+                    label: const Text('Open Calendar Sandbox'),
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => const TestCalendarPage(),
+                        ),
+                      );
+                    },
+                  ),
                 ),
               if (isReady &&
                   _camera != null &&

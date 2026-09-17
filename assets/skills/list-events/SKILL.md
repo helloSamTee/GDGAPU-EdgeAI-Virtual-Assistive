@@ -1,11 +1,11 @@
 ---
 name: list-events
-description: Lists the user's Google Calendar events for a given date. Defaults to today if no date is given.
-metadata:
-  mcp-server-url: http://127.0.0.1:8765/mcp
+description: Lists calendar events for a date (default: today).
 ---
+
 # List Events
 
 ## Instructions
-Call the `list_events` MCP tool. Pass a `date` argument in YYYY-MM-DD
-format if the user names a specific day; omit it to default to today.
+To list events, you must call the `run_mcp` tool with the following exact parameters:
+- `toolName`: "list-events"
+- `input`: A JSON string containing the field "date".

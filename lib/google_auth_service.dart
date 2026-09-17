@@ -26,6 +26,9 @@ class GoogleAuthService {
   final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
   bool _initialized = false;
   auth.AuthClient? _authClient;
+  GoogleSignInAccount? _account;
+
+  GoogleSignInAccount? get account => _account;
 
   Future<void> _ensureInitialized() async {
     if (_initialized) return;
@@ -57,6 +60,7 @@ class GoogleAuthService {
       account = null;
     }
     account ??= await _googleSignIn.authenticate();
+    _account = account;
 
     final authorization =
         await account.authorizationClient.authorizationForScopes(scopes) ??
@@ -80,6 +84,13 @@ class GoogleAuthService {
   Future<gmail.GmailApi> getGmailApi() async {
     final client = await getAuthenticatedClient();
     return gmail.GmailApi(client);
+  }
+
+  Future<void> signOut() async {
+    await _ensureInitialized();
+    await _googleSignIn.signOut();
+    _authClient = null;
+    _account = null;
   }
 
   // Call this if a tool call fails with an auth error, to force a fresh
