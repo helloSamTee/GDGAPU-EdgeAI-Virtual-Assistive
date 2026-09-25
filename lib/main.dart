@@ -6,7 +6,6 @@ import 'package:flutter_gemma/flutter_gemma.dart';
 import 'package:flutter_gemma_litertlm/flutter_gemma_litertlm.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:gdg_edge_ai/test_list_events.dart';
 import 'package:gdg_edge_ai/tool_handlers.dart';
 import 'package:object_detection/object_detection.dart';
 import 'package:flutter/services.dart' show rootBundle;
@@ -17,23 +16,9 @@ import 'camera_page.dart';
 import 'chatbot_page.dart';
 import 'google_auth_service.dart';
 
-const String _modelUrl =
-    'https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/'
-    'resolve/main/gemma-4-E2B-it.litertlm';
+const String _modelUrl = ""; // == MODEL VARIANT PLACEHOLDER ==
 
-const _localSkillNames = [
-  'list-events',
-  'create-calendar-event',
-  'read-latest-email',
-  // 'calculate-hash',
-  // 'interactive-map',
-  'kitchen-adventure',
-  // 'mood-tracker',
-  // 'qr-code',
-  // 'query-wikipedia',
-  // 'send-email',
-  // 'text-spinner',
-];
+const _localSkillNames = []; // == AGENTIC SKILLS PLACEHOLDER ==
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -126,94 +111,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       final hfToken = dotenv.env['HUGGINGFACE_TOKEN'];
 
-      // ADDITION: Implement a retry loop to survive WorkManager interruptions
-      bool modelDownloaded = false;
-      int retryCount = 0;
-      const maxRetries = 5;
-
-      // Turn on the wakelock to keep the screen on
-      await WakelockPlus.enable();
-
-      try {
-        while (!modelDownloaded && retryCount < maxRetries) {
-          try {
-            // install() is idempotent: it skips an existing download and restores
-            // the active model identity needed by getActiveModel().
-            await FlutterGemma.installModel(
-                  modelType: ModelType.gemma4,
-                  fileType: ModelFileType.litertlm,
-                )
-                .fromNetwork(
-                  _modelUrl,
-                  token: hfToken?.isNotEmpty == true ? hfToken : null,
-                )
-                .withProgress((progress) {
-                  if (mounted) {
-                    setState(() => _downloadProgress = progress / 100);
-                  }
-                })
-                .install();
-
-            modelDownloaded = true; // Success! Break the loop.
-          } catch (e) {
-            final errorStr = e.toString().toLowerCase();
-            if (errorStr.contains('canceled') ||
-                errorStr.contains('cancelled')) {
-              retryCount++;
-              print(
-                'Download interrupted by OS. Resuming (Attempt $retryCount of $maxRetries)...',
-              );
-              // Give the OS WorkManager a brief moment to reschedule before re-attaching
-              await Future.delayed(const Duration(seconds: 2));
-            } else {
-              // If it's a different error (like 401 Unauthorized), throw it normally
-              rethrow;
-            }
-          }
-        }
-
-        if (!modelDownloaded) {
-          throw Exception(
-            'Failed to download model after $maxRetries attempts.',
-          );
-        }
-      } finally {
-        // Turn off the wakelock after the download attempt
-        await WakelockPlus.disable();
-      }
-
-      setState(() => _stage = _InitStage.modelLoad);
-
-      _model = await FlutterGemma.getActiveModel(
-        maxTokens: 4096,
-        // The device's OpenCL LiteRT accelerator crashes while compiling this
-        // model. CPU is slower, but keeps model startup inside Dart's error
-        // handling instead of terminating the process in native code.
-        preferredBackend: PreferredBackend.cpu,
-        // The vision encoder has its own backend; keep it on CPU too.
-        preferredVisionBackend: PreferredBackend.cpu,
-        supportImage: true,
-        maxNumImages: 1,
-      );
-
-      // final source = AssetSkillSource();
-      // final loadedSkills = await source.load();
-
-      await _createAgentSession();
-
-      setState(() => _stage = _InitStage.detector);
-      _detector = await ObjectDetector.create();
-
-      setState(() => _stage = _InitStage.detector);
-      _detector = await ObjectDetector.create();
-
-      _tts = FlutterTts();
-      await _tts!.setLanguage('en-US');
-      await _tts!.setSpeechRate(0.5);
-      await _tts!.setPitch(1.0);
-
-      if (!mounted) return;
-      setState(() => _stage = _InitStage.ready);
+      // == INITIALISATION PLACEHOLDER ==
     } catch (e) {
       if (!mounted) return;
       setState(() => _initError = 'Setup failed: $e');
@@ -277,14 +175,11 @@ class _HomeScreenState extends State<HomeScreen> {
     return skills;
   }
 
-  JsSkillSource _localJsSkillSourceFor(Skill skill) {
-    // Extract the name from the Skill object and wrap the path in a JsSkillSource
-    return JsSkillSource.asset(
-      'assets/skills/${skill.name}/scripts/index.html',
-    );
-  }
-
   Future<void> _createAgentSession() async {
+    final source = AssetSkillSource();
+    // final bundled_starter_skills = await source.load();
+    // final registry = SkillRegistry()..addAll(bundled_starter_skills, selected: true);
+
     final loadedSkills = await _loadLocalSkills();
     final registry = SkillRegistry();
 
@@ -302,7 +197,7 @@ class _HomeScreenState extends State<HomeScreen> {
       supportImage: true,
       executors: [
         TextSkillExecutor(),
-        JsSkillExecutor(sourceFor: _localJsSkillSourceFor),
+        JsSkillExecutor(sourceFor: source.jsSkillSourceFor),
         NativeIntentExecutor(),
         McpSkillExecutor(
           // clients: [
@@ -414,21 +309,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   label: const Text('Sign in with Google'),
                   onPressed: _isSigningIn ? null : _ensureGoogleAuth,
                 ),
-              // if (_isGoogleAuthenticated)
-              //   Padding(
-              //     padding: const EdgeInsets.only(top: 16.0),
-              //     child: OutlinedButton.icon(
-              //       icon: const Icon(Icons.bug_report, color: Colors.orange),
-              //       label: const Text('Open Calendar Sandbox'),
-              //       onPressed: () {
-              //         Navigator.of(context).push(
-              //           MaterialPageRoute(
-              //             builder: (context) => const TestCalendarPage(),
-              //           ),
-              //         );
-              //       },
-              //     ),
-              //   ),
               if (isReady &&
                   _camera != null &&
                   _agentSession != null &&

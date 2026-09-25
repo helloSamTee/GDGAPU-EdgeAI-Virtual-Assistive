@@ -19,8 +19,7 @@ class GoogleAuthService {
   static final GoogleAuthService instance = GoogleAuthService._();
 
   static const List<String> scopes = [
-    calendar.CalendarApi.calendarEventsScope,
-    gmail.GmailApi.gmailReadonlyScope,
+    // == SCOPE PLACEHOLDER ==
   ];
 
   final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
@@ -74,16 +73,6 @@ class GoogleAuthService {
 
     _authClient = client;
     return client;
-  }
-
-  Future<calendar.CalendarApi> getCalendarApi() async {
-    final client = await getAuthenticatedClient();
-    return calendar.CalendarApi(client);
-  }
-
-  Future<gmail.GmailApi> getGmailApi() async {
-    final client = await getAuthenticatedClient();
-    return gmail.GmailApi(client);
   }
 
   Future<void> signOut() async {

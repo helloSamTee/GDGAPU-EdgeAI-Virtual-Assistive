@@ -166,8 +166,7 @@ class _ChatbotPageState extends State<ChatbotPage> {
               : text;
 
       await for (final event in widget.agent.ask(
-        prompt,
-        imageBytes: imageBytes,
+        // == AGENT PLACEHOLDER ==
       )) {
         if (event is TextChunkEvent) {
           setState(() {
@@ -188,7 +187,7 @@ class _ChatbotPageState extends State<ChatbotPage> {
 
       // 2. Speak the COMPLETE message only after the stream is fully finished
       if (botMessage.text != null && botMessage.text!.isNotEmpty) {
-        await widget.tts.speak(botMessage.text!.trim());
+        // == TTS PLACEHOLDER ==
       }
     } catch (e) {
       final errorStr = e.toString();

@@ -1,10 +1,10 @@
 # Google Cloud Setup Guide: Calendar & Gmail APIs
 
-This guide walks you through creating a Google Cloud Project from scratch, enabling the required APIs, and generating the correct OAuth credentials to run this Flutter application locally.
+This guide walks you through creating a Google Cloud Project from scratch, enabling Google Sign-In and the required APIs, generating the correct OAuth credentials, and configuring both Android and iOS to run this Flutter application locally.
 
 ## Step 1: Create a Google Cloud Project
 
-1. Go to the [Google Cloud Console](https://www.google.com/search?q=https://console.cloud.google.com/&utm_source=gemini).
+1. Go to the [Google Cloud Console](https://www.google.com/search?q=https://console.cloud.google.com).
 2. Click the project dropdown in the top-left corner (next to the Google Cloud logo) and click **New Project**.
 3. Name your project (e.g., `Vision Assistant Edge AI`) and click **Create**.
 4. Once created, ensure your new project is selected in the top dropdown menu.
@@ -27,19 +27,27 @@ Google requires a consent screen to inform users what data the app is requesting
 * **App name:** (e.g., `Vision Assistant Local`)
 * **User support email:** Select your email.
 * **Developer contact information:** Enter your email.
-
-
 4. Click **Save and Continue**.
-5. On the **Scopes** screen, click **Add or Remove Scopes** and manually add these two scopes (if they don't appear, you can paste the URLs directly):
-* `[https://www.googleapis.com/auth/calendar.events](https://www.googleapis.com/auth/calendar.events)`
-* `[https://www.googleapis.com/auth/gmail.readonly](https://www.googleapis.com/auth/gmail.readonly)`
 
 
-6. Click **Save and Continue**.
-7. On the **Test users** screen, click **Add Users** and add the exact Google email address you plan to use when signing into the app on your phone.
-8. Click **Save and Continue**, then review and return to the dashboard.
+## Step 4: Link to Firebase & Enable Google Sign-In Provider (Optional / If Using Firebase Configs)
 
-## Step 4: Generate Your Local SHA-1 Fingerprint
+If your app uses `google-services.json` or `GoogleService-Info.plist`, connect this Google Cloud project to Firebase instead of creating a second project:
+
+1. Open the [Firebase Console](https://console.firebase.google.com/).
+2. Click **Create a new Firebase Project**.
+3. Click the **Add Firebase to Google Cloud project** at bottom left, then click the dropdown and **select your existing Google Cloud project** from the list.
+4. Accept the terms and click **Continue** (you can disable Google Analytics for local dev).
+5. In the Firebase project sidebar, go to **Security** > **Authentication**.
+6. Click **Get Started**, then select the **Sign-in method** tab.
+7. Click **Google** under Additional providers:
+* Toggle **Enable**.
+* Choose a **Project support email**.
+* Ensure the **Web SDK configuration** automatically reflects your Web Client ID.
+* Click **Save**.
+
+
+## Step 5: Generate Your Local SHA-1 Fingerprint (For Android)
 
 To authorize your specific computer to build the Android app, you need the SHA-1 fingerprint of your local debug keystore.
 
@@ -63,7 +71,7 @@ keytool -list -v -keystore "%USERPROFILE%\.android\debug.keystore" -alias androi
 
 Copy the 20-byte hex string labeled **SHA1** from the output.
 
-## Step 5: Create the Android OAuth Client
+## Step 6: Create the Android OAuth Client
 
 This step registers your Android app with Google Cloud.
 
@@ -72,34 +80,77 @@ This step registers your Android app with Google Cloud.
 3. Select **Android** as the Application type.
 4. Fill in the details:
 * **Name:** `Android Client`
-* **Package name:** Find this in your Flutter project inside `android/app/build.gradle` (`com.gdgapu.visual_assistant`).
+* **Package name:** Find this in your Flutter project inside `android/app/build.gradle` (e.g., `com.gdgapu.visual_assistant`).
 * **SHA-1 certificate fingerprint:** Paste the SHA-1 string you copied in Step 4.
 
 
 5. Click **Create**.
 
-## Step 6: Create the Web OAuth Client (Crucial Step)
 
-Even though this is an Android app, the `google_sign_in` package requires a **Web application** Client ID to request a server auth code for the `googleapis` backend tools.
+## Step 7: Create the iOS OAuth Client (For iOS)
+
+This step registers your iOS app with Google Cloud.
+
+1. Still on the **Credentials** page, click **+ Create Credentials** > **OAuth client ID**.
+2. Select **iOS** as the Application type.
+3. Fill in the details:
+* **Name:** `iOS Client`
+* **Bundle ID:** Find this in Xcode or in your Flutter project under `ios/Runner.xcodeproj/project.pbxproj` (typically matches your Android package without underscores, e.g., `com.gdgapu.visualassistant`).
+
+
+4. Click **Create**.
+5. A dialog will appear. Copy the **iOS URL scheme** (also known as the `REVERSED_CLIENT_ID`, which looks like `com.googleusercontent.apps.123456789-abcdefg`). You will need this in Step 8.
+
+## Step 8: Create the Web OAuth Client (Required for Server Auth & Scopes)
+
+Even though this is a mobile app, the `google_sign_in` package requires a **Web application** Client ID to request a server auth code for the `googleapis` backend tools.
 
 1. Still on the **Credentials** page, click **+ Create Credentials** > **OAuth client ID**.
 2. Select **Web application** as the Application type.
 3. Name it `Web Client`.
 4. You do **not** need to add any Authorized JavaScript origins or Redirect URIs. Leave them blank.
 5. Click **Create**.
-6. A dialog will appear with your Client ID. Copy the **Client ID** (it ends in `.apps.googleusercontent.com`). This is your `GOOGLE_SERVER_CLIENT_ID`.
+6. Copy the **Client ID** (it ends in `.apps.googleusercontent.com`). This is your `GOOGLE_SERVER_CLIENT_ID`.
 
-## Step 7: Configure Your Environment File
+## Step 9: Configure iOS App (`Info.plist`)
+
+To allow Google Sign-In to redirect back to your app on iOS, you must add the URL scheme you generated in Step 6 to your iOS project.
+
+1. Open `<project_root>/ios/Runner/Info.plist` in your code editor.
+2. Add the following snippet inside the main `<dict>` tag, replacing `YOUR_IOS_URL_SCHEME_HERE` with the iOS URL scheme you copied in Step 6:
+
+```xml
+<key>CFBundleURLTypes</key>
+<array>
+  <dict>
+    <key>CFBundleTypeRole</key>
+    <string>Editor</string>
+    <key>CFBundleURLSchemes</key>
+    <array>
+      <!-- Copied from Google Cloud Console -> iOS Client -> iOS URL scheme -->
+      <string>YOUR_IOS_URL_SCHEME_HERE</string>
+    </array>
+  </dict>
+</array>
+
+```
+
+### Config Files (If using Firebase services)
+
+* **Android:** In Firebase Console > Settings / Project Settings, add an Android app with package `com.gdgapu.visual_assistant` and your SHA-1. Download `google-services.json` and move it to `android/app/google-services.json`.
+* **iOS:** Add an iOS app with your Bundle ID. Download `GoogleService-Info.plist` and move it into `ios/Runner/` via Xcode.
+
+## Step 10: Configure Your Environment File
 
 1. In the root of your Flutter project, copy the example environment file:
+
 ```bash
 cp .env.example .env
 
 ```
 
-
 2. Open the `.env` file in your text editor.
-3. Paste the **Web Client ID** you copied in Step 6 into the `GOOGLE_SERVER_CLIENT_ID` variable.
+3. Paste the **Web Client ID** you copied in Step 7 into the `GOOGLE_SERVER_CLIENT_ID` variable.
 4. Add your Hugging Face read access token.
 
 Your final `.env` file should look like this:
@@ -114,21 +165,13 @@ GOOGLE_SERVER_CLIENT_ID=123456789-abcdefg.apps.googleusercontent.com
 
 ```
 
-You can now run `flutter run` on your device. When you tap "Sign in with Google", it will authenticate securely against your personal Google Cloud Project.
-## Google Sign-In
+## Run the App
 
-Create an OAuth 2.0 **Web application** client in the same Google Cloud
-project as the Android client, then start the app with its client ID:
+You can now run the app on your device. When you tap "Sign in with Google", it will authenticate securely against your personal Google Cloud Project.
 
 ```bash
-flutter run --dart-define=GOOGLE_SERVER_CLIENT_ID=your-web-client-id.apps.googleusercontent.com
+flutter run
+
 ```
 
-The Android OAuth client must use package name `com.gdgapu.visual_assistant`
-and the SHA-1 certificate of the key used to install the app. The downloaded
-Firebase configuration file should be named `google-services.json` and placed
-in `android/app/`.
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on using Flutter, and a full API reference.
+*(Alternatively, if you prefer not to use a `.env` file, you can pass the client ID directly at build time: `flutter run --dart-define=GOOGLE_SERVER_CLIENT_ID=your-web-client-id.apps.googleusercontent.com`)*

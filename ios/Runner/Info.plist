@@ -2,21 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>NSCameraUsageDescription</key>
-	<string>We use the camera for multimodal AI input.</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>We use your photos for multimodal AI input.</string>
-	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>We may save generated images to your photo library.</string>
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>This app requires speech recognition to transcribe your voice into text.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>This app requires microphone access to hear your voice commands.</string>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-	</dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
