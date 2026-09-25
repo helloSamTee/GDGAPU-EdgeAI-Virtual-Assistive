@@ -28,6 +28,15 @@ Google requires a consent screen to inform users what data the app is requesting
 * **User support email:** Select your email.
 * **Developer contact information:** Enter your email.
 4. Click **Save and Continue**.
+5. **Add Test Users (Crucial for avoiding 403 Access Denied errors):**
+   * On the **Test users** screen, click the **+ Add Users** button.
+   * Type in the exact `@gmail.com` or Google Workspace email address you intend to use when signing into the app on your testing device. 
+   * Click **Save** and then click **Save and Continue**.
+
+> **⚠️ Important Note on "Publishing Status":** 
+> By default, your app's publishing status is set to **"Testing"**. While in Testing mode, *only* the emails listed in the **Test users** section can sign in. Anyone else will receive a `403 access_denied` error. 
+> 
+> If you prefer not to manually add every tester's email, you can click the **Publish App** button on the consent screen dashboard to push it to **"In production"**. This removes the test user restriction, allowing any Google account to sign in (they will just see an "App isn't verified" warning, which they can bypass by clicking *Advanced > Go to App*).
 
 
 ## Step 4: Link to Firebase & Enable Google Sign-In Provider (Optional / If Using Firebase Configs)
@@ -47,7 +56,7 @@ If your app uses `google-services.json` or `GoogleService-Info.plist`, connect t
 * Click **Save**.
 
 
-## Step 5: Generate Your Local SHA-1 Fingerprint (For Android)
+## Step 5: Generate Your Local SHA-1 & SHA-256 Fingerprint (For Android)
 
 To authorize your specific computer to build the Android app, you need the SHA-1 fingerprint of your local debug keystore.
 
@@ -81,7 +90,7 @@ This step registers your Android app with Google Cloud.
 4. Fill in the details:
 * **Name:** `Android Client`
 * **Package name:** Find this in your Flutter project inside `android/app/build.gradle` (e.g., `com.gdgapu.visual_assistant`).
-* **SHA-1 certificate fingerprint:** Paste the SHA-1 string you copied in Step 4.
+* **SHA-1 & SHA-256 certificate fingerprint:** Paste the SHA-1 & SHA-256 string you copied in Step 4.
 
 
 5. Click **Create**.
@@ -137,7 +146,7 @@ To allow Google Sign-In to redirect back to your app on iOS, you must add the UR
 
 ### Config Files (If using Firebase services)
 
-* **Android:** In Firebase Console > Settings / Project Settings, add an Android app with package `com.gdgapu.visual_assistant` and your SHA-1. Download `google-services.json` and move it to `android/app/google-services.json`.
+* **Android:** In Firebase Console > Settings / Project Settings, add an Android app with package `com.gdgapu.visual_assistant` and your SHA-1 & SHA-256. Download `google-services.json` and move it to `android/app/google-services.json`.
 * **iOS:** Add an iOS app with your Bundle ID. Download `GoogleService-Info.plist` and move it into `ios/Runner/` via Xcode.
 
 ## Step 10: Configure Your Environment File
