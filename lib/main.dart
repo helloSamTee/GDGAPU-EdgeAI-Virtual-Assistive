@@ -280,14 +280,11 @@ class _HomeScreenState extends State<HomeScreen> {
     return skills;
   }
 
-  JsSkillSource _localJsSkillSourceFor(Skill skill) {
-    // Extract the name from the Skill object and wrap the path in a JsSkillSource
-    return JsSkillSource.asset(
-      'assets/skills/${skill.name}/scripts/index.html',
-    );
-  }
-
   Future<void> _createAgentSession() async {
+    final source = AssetSkillSource();
+    // final bundled_starter_skills = await source.load();
+    // final registry = SkillRegistry()..addAll(bundled_starter_skills, selected: true);
+
     final loadedSkills = await _loadLocalSkills();
     final registry = SkillRegistry();
 
@@ -305,7 +302,7 @@ class _HomeScreenState extends State<HomeScreen> {
       supportImage: true,
       executors: [
         TextSkillExecutor(),
-        JsSkillExecutor(sourceFor: _localJsSkillSourceFor),
+        JsSkillExecutor(sourceFor: source.jsSkillSourceFor),
         NativeIntentExecutor(),
         McpSkillExecutor(
           // clients: [
