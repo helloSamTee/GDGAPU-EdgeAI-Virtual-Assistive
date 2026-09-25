@@ -66,7 +66,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
-enum _InitStage { camera, modelDownload, modelLoad, detector, ready }
+enum _InitStage { auth, camera, modelDownload, modelLoad, detector, ready }
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -109,6 +109,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startInitialization() async {
+    if (mounted) {
+      setState(() => _stage = _InitStage.auth);
+    }
     await _ensureGoogleAuth();
     await _initEverything();
   }
@@ -329,6 +332,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   String _stageLabel() {
     switch (_stage) {
+      case _InitStage.auth:
+        return _isSigningIn
+            ? 'Signing in with Google...'
+            : 'Preparing Google services...';
       case _InitStage.camera:
         return 'Finding cameras...';
       case _InitStage.modelDownload:
@@ -413,6 +420,15 @@ class _HomeScreenState extends State<HomeScreen> {
                   icon: const Icon(Icons.login),
                   label: const Text('Sign in with Google'),
                   onPressed: _isSigningIn ? null : _ensureGoogleAuth,
+                ),
+              if (_isGoogleAuthenticated)
+                Padding(
+                  padding: const EdgeInsets.only(top: 16.0),
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.switch_account),
+                    label: const Text('Switch Google account'),
+                    onPressed: _isSigningIn ? null : _switchGoogleAccount,
+                  ),
                 ),
               // if (_isGoogleAuthenticated)
               //   Padding(
