@@ -12,3 +12,8 @@ You MUST use the exact JSON keys: `title`, `date`, `startTime`, and `endTime`. U
 - `date`: Must be YYYY-MM-DD format.
 - `startTime`: Must be 24-hour HH:MM format.
 - `endTime`: Must be 24-hour HH:MM format.
+
+Rules for "date":
+- For today, OMIT the field (send `{}`).
+- For other days, use YYYY-MM-DD, or the words "tomorrow" / "yesterday".
+- Never guess a date. Use the "Current date" line in the conversation as reference.
