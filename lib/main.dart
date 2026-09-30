@@ -420,7 +420,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   _camera != null &&
                   _agentSession != null &&
                   _detector != null)
-                  IndexedStack(
+                IndexedStack(
                   index: _selectedIndex,
                   children: [
                     Semantics(
@@ -440,18 +440,18 @@ class _HomeScreenState extends State<HomeScreen> {
                       child: _screens[2],
                     ),
                   ],
-                ),
-                if (!(isReady &&
-                  _camera != null &&
-                  _agentSession != null &&
-                  _detector != null))
+                )
+              else
                 _InitializationView(
-                stageLabel: _stageLabel(),
-                initError: _initError,
-                isDownloading: _stage == _InitStage.modelDownload,
-                downloadProgress: _downloadProgress,
-              ),
-              
+                  stageLabel: _stageLabel(),
+                  initError: _initError,
+                  isDownloading: _stage == _InitStage.modelDownload,
+                  downloadProgress: _downloadProgress,
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
