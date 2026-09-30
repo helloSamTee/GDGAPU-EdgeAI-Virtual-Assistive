@@ -108,7 +108,7 @@ This step registers your iOS app with Google Cloud.
 
 
 4. Click **Create**.
-5. A dialog will appear. Copy the **iOS URL scheme** (also known as the `REVERSED_CLIENT_ID`, which looks like `com.googleusercontent.apps.123456789-abcdefg`). You will need this in Step 8.
+5. A dialog will appear. Copy the **iOS URL scheme** (also known as the `REVERSED_CLIENT_ID`, which looks like `com.googleusercontent.apps.123456789-abcdefg`). You will need this in Step 9.
 
 ## Step 8: Create the Web OAuth Client (Required for Server Auth & Scopes)
 
@@ -123,7 +123,7 @@ Even though this is a mobile app, the `google_sign_in` package requires a **Web 
 
 ## Step 9: Configure iOS App (`Info.plist`)
 
-To allow Google Sign-In to redirect back to your app on iOS, you must add the URL scheme you generated in Step 6 to your iOS project.
+To allow Google Sign-In to redirect back to your app on iOS, you must add the URL scheme you generated in Step 7 to your iOS project.
 
 1. Open `<project_root>/ios/Runner/Info.plist` in your code editor.
 2. Add the following snippet inside the main `<dict>` tag, replacing `YOUR_IOS_URL_SCHEME_HERE` with the iOS URL scheme you copied in Step 6:
