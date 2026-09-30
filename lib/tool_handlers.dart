@@ -23,6 +23,18 @@ class ToolHandlers {
     }
   }
 
+  static DateTime resolveDate(String? raw) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day).toUtc();
+    final s = (raw ?? '').trim().toLowerCase();
+
+    if (s.isEmpty || s == 'today') return today;
+    if (s == 'tomorrow') return today.add(const Duration(days: 1));
+    if (s == 'yesterday') return today.subtract(const Duration(days: 1));
+
+    return DateTime.tryParse(s) ?? today;
+  }
+
   static Future<Map<String, dynamic>> createCalendarEvent(
     Map<String, dynamic> args,
   ) async {
@@ -31,7 +43,8 @@ class ToolHandlers {
 
       // 1. Safely extract strings. If null, default to empty string.
       final title = (args['title'] ?? '(No Title)') as String;
-      final dateStr = (args['date'] ?? '') as String;
+      final dateDT = resolveDate((args['date'] ?? '') as String);
+      final dateStr = dateDT.toIso8601String().substring(0, 10); // YYYY-MM-DD
       final startTimeStr = (args['startTime'] ?? '') as String;
       final endTimeStr = (args['endTime'] ?? '') as String;
 
@@ -90,20 +103,7 @@ class ToolHandlers {
     try {
       final api = await GoogleAuthService.instance.getCalendarApi();
 
-      // 1. Safely handle whatever the LLM throws at the date parameter
-      final dateStr = args['date'] as String?;
-      DateTime targetDate = DateTime.now(); // Default to today
-
-      if (dateStr != null && dateStr.isNotEmpty) {
-        try {
-          targetDate = DateTime.parse(dateStr);
-        } catch (e) {
-          print(
-            '⚠️ LLM sent invalid date format: "$dateStr". Falling back to today.',
-          );
-          // If the LLM sends "today" or "tomorrow", we just default to DateTime.now()
-        }
-      }
+      final targetDate = resolveDate(args['date'] as String?);
 
       final dayStart = DateTime(
         targetDate.year,

@@ -26,16 +26,17 @@ class CameraPage extends StatefulWidget {
   final FlutterTts tts;
 
   @override
-  State<CameraPage> createState() => _CameraPageState();
+  State<CameraPage> createState() => CameraPageState();
 }
 
-class _CameraPageState extends State<CameraPage> {
+class CameraPageState extends State<CameraPage> {
   late CameraController _controller;
   late Future<void> _initializeControllerFuture;
 
   // Tracks whether the dummy action is currently "running" so we can
   // show a loading state on the capture button.
   bool _isProcessing = false;
+  String? _capturedImagePath;
 
   @override
   void initState() {
@@ -75,6 +76,7 @@ class _CameraPageState extends State<CameraPage> {
     debugPrint('Camera image bytes: ${detectedBytes.length}');
 
     final inferencePrompt =
+        'Answer the following question based on the image and detected objects directly without using any skill. '
         'I detected these objects in the image: $detectionSummary. '
         'Describe the scene briefly, mention any visible text, and explain '
         'what is most important to a visually impaired user in 3 to 5 sentences only.';
@@ -89,7 +91,7 @@ class _CameraPageState extends State<CameraPage> {
       }
       // You can optionally handle other events here, like ToolCallEvent
       else if (event is ToolCallEvent) {
-        print('Bot is calling tool: ${event.toolName}');
+        debugPrint('Bot is calling tool: ${event.toolName}');
       }
     }
 
@@ -107,7 +109,7 @@ class _CameraPageState extends State<CameraPage> {
     return (resultMessage, response, detections);
   }
 
-  Future<void> _onCapturePressed() async {
+  Future<void> captureAndDescribe() async {
     if (_isProcessing) return;
 
     try {
@@ -116,6 +118,9 @@ class _CameraPageState extends State<CameraPage> {
       setState(() => _isProcessing = true);
 
       final image = await _controller.takePicture();
+      if (mounted) {
+        setState(() => _capturedImagePath = image.path);
+      }
       final (
         resultMessage,
         ttsMessage,
@@ -124,7 +129,10 @@ class _CameraPageState extends State<CameraPage> {
 
       if (!mounted) return;
 
-      setState(() => _isProcessing = false);
+      setState(() {
+        _isProcessing = false;
+        _capturedImagePath = null;
+      });
       widget.tts.speak(ttsMessage ?? resultMessage);
 
       await Navigator.of(context).push(
@@ -152,6 +160,20 @@ class _CameraPageState extends State<CameraPage> {
       body: FutureBuilder<void>(
         future: _initializeControllerFuture,
         builder: (context, snapshot) {
+          if (_capturedImagePath != null) {
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                Image.file(File(_capturedImagePath!), fit: BoxFit.contain),
+                if (_isProcessing)
+                  const ColoredBox(
+                    color: Color(0x66000000),
+                    // child: Center(child: CircularProgressIndicator()),
+                  ),
+              ],
+            );
+          }
+
           if (snapshot.connectionState == ConnectionState.done) {
             return CameraPreview(_controller);
           } else {
@@ -160,7 +182,7 @@ class _CameraPageState extends State<CameraPage> {
         },
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _onCapturePressed,
+        onPressed: captureAndDescribe,
         child:
             _isProcessing
                 ? const SizedBox(

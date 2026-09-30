@@ -6,6 +6,7 @@ import 'package:flutter_gemma_agent/flutter_gemma_agent.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+import 'package:gpt_markdown/gpt_markdown.dart';
 
 // A single message in the chat, from either the user or the bot.
 // Can carry text, an image, or both.
@@ -33,10 +34,10 @@ class ChatbotPage extends StatefulWidget {
   final VoidCallback onClearChat;
 
   @override
-  State<ChatbotPage> createState() => _ChatbotPageState();
+  State<ChatbotPage> createState() => ChatbotPageState();
 }
 
-class _ChatbotPageState extends State<ChatbotPage> {
+class ChatbotPageState extends State<ChatbotPage> {
   final List<ChatMessage> _messages = [];
   final TextEditingController _textController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
@@ -45,6 +46,8 @@ class _ChatbotPageState extends State<ChatbotPage> {
   final SpeechToText _speechToText = SpeechToText();
   bool _speechEnabled = false;
   bool _isListening = false;
+
+  bool get isListening => _isListening;
 
   final ImagePicker _imagePicker = ImagePicker();
   String? _pendingImagePath;
@@ -73,13 +76,13 @@ class _ChatbotPageState extends State<ChatbotPage> {
   }
 
   // Start listening to the microphone
-  void _startListening() async {
+  Future<void> startVoiceInput() async {
     await _speechToText.listen(
       onResult: (result) {
         if (mounted) {
           setState(() {
             // Update the text field with the recognized words
-            _textController.text = result.recognizedWords;
+            _textController.text += result.recognizedWords;
           });
         }
       },
@@ -88,7 +91,7 @@ class _ChatbotPageState extends State<ChatbotPage> {
   }
 
   // Stop listening
-  void _stopListening() async {
+  Future<void> stopVoiceInput() async {
     await _speechToText.stop();
     setState(() => _isListening = false);
   }
@@ -125,6 +128,28 @@ class _ChatbotPageState extends State<ChatbotPage> {
     widget.onClearChat();
   }
 
+  String buildDateContext() {
+    final now = DateTime.now();
+    const days = [
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday',
+    ];
+    final iso = now.toIso8601String().substring(0, 10);
+    final hh = now.hour.toString().padLeft(2, '0');
+    final mm = now.minute.toString().padLeft(2, '0');
+    final offset = now.timeZoneOffset;
+    final tz =
+        '${offset.isNegative ? '-' : '+'}'
+        '${offset.inHours.abs().toString().padLeft(2, '0')}:'
+        '${(offset.inMinutes.abs() % 60).toString().padLeft(2, '0')}';
+    return 'Current date: ${days[now.weekday - 1]} $iso, time $hh:$mm (UTC$tz).';
+  }
+
   Future<void> _sendMessage() async {
     final text = _textController.text.trim();
     final imagePath = _pendingImagePath;
@@ -134,7 +159,7 @@ class _ChatbotPageState extends State<ChatbotPage> {
 
     // Stop listening if the user manually hits send while talking
     if (_isListening) {
-      _stopListening();
+      stopVoiceInput();
     }
 
     setState(() {
@@ -163,7 +188,7 @@ class _ChatbotPageState extends State<ChatbotPage> {
       final prompt =
           text.isEmpty
               ? 'Describe the attached image. Name the main objects.'
-              : text;
+              : '${buildDateContext()}\n\n$text';
 
       await for (final event in widget.agent.ask(
         prompt,
@@ -180,7 +205,7 @@ class _ChatbotPageState extends State<ChatbotPage> {
           print('Bot is calling tool: ${event.toolName}');
           setState(() {
             botMessage.text =
-                (botMessage.text ?? '') + '\n[Checking ${event.toolName}...]\n';
+                '${botMessage.text ?? ''}\n[Checking ${event.toolName}...]\n';
           });
           _scrollToBottom();
         }
@@ -254,7 +279,10 @@ class _ChatbotPageState extends State<ChatbotPage> {
             if (message.imagePath != null && message.text != null)
               const SizedBox(height: 6),
             if (message.text != null)
-              Text(message.text!, style: const TextStyle(color: Colors.white)),
+              GptMarkdown(
+                message.text!,
+                style: const TextStyle(color: Colors.white),
+              ),
           ],
         ),
       ),
@@ -329,47 +357,68 @@ class _ChatbotPageState extends State<ChatbotPage> {
             ),
           SafeArea(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.image_outlined),
-                    onPressed: _pickImage,
-                  ),
-                  if (_speechEnabled)
-                    IconButton(
-                      icon: Icon(_isListening ? Icons.mic : Icons.mic_none),
-                      color: _isListening ? Colors.redAccent : null,
-                      onPressed:
-                          _isListening ? _stopListening : _startListening,
-                    ),
-                  Expanded(
-                    child: TextField(
-                      controller: _textController,
-                      decoration: const InputDecoration(
-                        hintText: 'Type a message...',
-                        border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Theme.of(context).dividerColor),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 4, 8, 4),
+                  child: Column(
+                    children: [
+                      TextField(
+                        controller: _textController,
+                        minLines: 1,
+                        maxLines: 5,
+                        keyboardType: TextInputType.multiline,
+                        textInputAction: TextInputAction.newline,
+                        decoration: const InputDecoration(
+                          hintText: 'Write a message...',
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.symmetric(vertical: 8),
                         ),
                       ),
-                      onSubmitted: (_) => _sendMessage(),
-                      textInputAction: TextInputAction.send,
-                    ),
+                      Row(
+                        children: [
+                          IconButton(
+                            tooltip: 'Attach image',
+                            icon: const Icon(Icons.image_outlined),
+                            onPressed: _pickImage,
+                          ),
+                          if (_speechEnabled)
+                            IconButton(
+                              tooltip: 'Voice input',
+                              icon: Icon(
+                                _isListening ? Icons.mic : Icons.mic_none,
+                              ),
+                              color: _isListening ? Colors.redAccent : null,
+                              onPressed:
+                                  _isListening
+                                      ? stopVoiceInput
+                                      : startVoiceInput,
+                            ),
+                          const Spacer(),
+                          IconButton.filled(
+                            tooltip: 'Send message',
+                            icon:
+                                _isBotTyping
+                                    ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                    : const Icon(Icons.arrow_upward),
+                            onPressed: _isBotTyping ? null : _sendMessage,
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                  IconButton(
-                    icon:
-                        _isBotTyping
-                            ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                            : const Icon(Icons.send),
-                    onPressed: _isBotTyping ? null : _sendMessage,
-                  ),
-                ],
+                ),
               ),
             ),
           ),
