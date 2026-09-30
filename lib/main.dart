@@ -1,20 +1,23 @@
 import 'dart:async';
 
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
+import 'package:flutter/services.dart'
+    show EventChannel, HapticFeedback, rootBundle;
 import 'package:flutter_gemma/flutter_gemma.dart';
 import 'package:flutter_gemma_litertlm/flutter_gemma_litertlm.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:gdg_edge_ai/test_list_events.dart';
 import 'package:gdg_edge_ai/tool_handlers.dart';
 import 'package:object_detection/object_detection.dart';
-import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_gemma_agent/flutter_gemma_agent.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'camera_page.dart';
 import 'chatbot_page.dart';
+import 'account_page.dart';
 import 'google_auth_service.dart';
 
 const String _modelUrl =
@@ -90,22 +93,96 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isGoogleAuthenticated = false;
   String? _authMessage;
   int _selectedIndex = 0;
+  final _cameraPageKey = GlobalKey<CameraPageState>();
+  final _chatbotPageKey = GlobalKey<ChatbotPageState>();
+  StreamSubscription<dynamic>? _volumeSubscription;
 
   // This list stores the screens for each tab
   List<Widget> get _screens => [
     CameraPage(
+      key: _cameraPageKey,
       camera: _camera!,
       detector: _detector!,
       agent: _agentSession!,
       tts: _tts!,
     ),
-    ChatbotPage(agent: _agentSession!, tts: _tts!, onClearChat: _resetChat),
+    ChatbotPage(
+      key: _chatbotPageKey,
+      agent: _agentSession!,
+      tts: _tts!,
+      onClearChat: _resetChat,
+    ),
+    AccountPage(
+      account: GoogleAuthService.instance.account,
+      isSigningIn: _isSigningIn,
+      isAuthenticated: _isGoogleAuthenticated,
+      message: _authMessage,
+      onSignIn: _ensureGoogleAuth,
+      onSignOut: _signOutGoogleAccount,
+      onSwitchAccount: _switchGoogleAccount,
+    ),
   ];
 
   @override
   void initState() {
     super.initState();
+    _listenForVolumeKeys();
     unawaited(_startInitialization());
+  }
+
+  void _listenForVolumeKeys() {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+
+    const channel = EventChannel('gdg_edge_ai/volume_keys');
+    _volumeSubscription = channel.receiveBroadcastStream().listen((event) {
+      if (event is! Map) return;
+      final type = event['type'];
+      if (type == 'switchTab') {
+        _switchTabFromHardware();
+      } else if (type == 'action') {
+        _runActiveTabAction();
+      }
+    });
+  }
+
+  void _switchTabFromHardware() {
+    if (!mounted) return;
+    final nextIndex = (_selectedIndex + 1) % 3;
+    HapticFeedback.heavyImpact();
+    setState(() => _selectedIndex = nextIndex);
+  }
+
+  void _runActiveTabAction() {
+    HapticFeedback.mediumImpact();
+    switch (_selectedIndex) {
+      case 0:
+        _cameraPageKey.currentState?.captureAndDescribe();
+      case 1:
+        final chatbot = _chatbotPageKey.currentState;
+        if (chatbot == null) return;
+        if (chatbot.isListening) {
+          chatbot.stopVoiceInput();
+        } else {
+          chatbot.startVoiceInput();
+        }
+      case 2:
+        SemanticsService.sendAnnouncement(
+          View.of(context),
+          'Account tab has no volume action',
+          TextDirection.ltr,
+        );
+    }
+  }
+
+  String _tabName(int index) {
+    const names = ['Camera', 'Chat', 'Account'];
+    return names[index];
+  }
+
+  @override
+  void dispose() {
+    _volumeSubscription?.cancel();
+    super.dispose();
   }
 
   Future<void> _startInitialization() async {
@@ -255,12 +332,8 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_isSigningIn) return;
 
     try {
-      await GoogleAuthService.instance.signOut();
+      await _signOutGoogleAccount();
       if (!mounted) return;
-      setState(() {
-        _isGoogleAuthenticated = false;
-        _authMessage = null;
-      });
       await _ensureGoogleAuth();
     } catch (error) {
       if (!mounted) return;
@@ -268,6 +341,31 @@ class _HomeScreenState extends State<HomeScreen> {
         _isGoogleAuthenticated = false;
         _authMessage = 'Google sign-out failed: $error';
       });
+    }
+  }
+
+  Future<void> _signOutGoogleAccount() async {
+    if (_isSigningIn) return;
+
+    setState(() {
+      _isSigningIn = true;
+      _authMessage = null;
+    });
+
+    try {
+      await GoogleAuthService.instance.signOut();
+      if (!mounted) return;
+      setState(() {
+        _isGoogleAuthenticated = false;
+        _isSigningIn = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isSigningIn = false;
+        _authMessage = 'Google sign-out failed: $error';
+      });
+      rethrow;
     }
   }
 
@@ -280,14 +378,11 @@ class _HomeScreenState extends State<HomeScreen> {
     return skills;
   }
 
-  JsSkillSource _localJsSkillSourceFor(Skill skill) {
-    // Extract the name from the Skill object and wrap the path in a JsSkillSource
-    return JsSkillSource.asset(
-      'assets/skills/${skill.name}/scripts/index.html',
-    );
-  }
-
   Future<void> _createAgentSession() async {
+    final source = AssetSkillSource();
+    // final bundled_starter_skills = await source.load();
+    // final registry = SkillRegistry()..addAll(bundled_starter_skills, selected: true);
+
     final loadedSkills = await _loadLocalSkills();
     final registry = SkillRegistry();
 
@@ -305,7 +400,7 @@ class _HomeScreenState extends State<HomeScreen> {
       supportImage: true,
       executors: [
         TextSkillExecutor(),
-        JsSkillExecutor(sourceFor: _localJsSkillSourceFor),
+        JsSkillExecutor(sourceFor: source.jsSkillSourceFor),
         NativeIntentExecutor(),
         McpSkillExecutor(
           // clients: [
@@ -367,92 +462,84 @@ class _HomeScreenState extends State<HomeScreen> {
         items: [
           BottomNavigationBarItem(icon: Icon(Icons.camera), label: 'Camera'),
           BottomNavigationBarItem(icon: Icon(Icons.chat), label: 'Chat'),
+          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Account'),
         ],
       ),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (_initError != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 16),
-                  child: Text(
-                    _initError!,
-                    style: const TextStyle(color: Colors.redAccent),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              if (!isReady && _initError == null) ...[
-                Text(_stageLabel(), textAlign: TextAlign.center),
-                const SizedBox(height: 12),
-                if (_stage == _InitStage.modelDownload)
-                  SizedBox(
-                    width: 240,
-                    child: LinearProgressIndicator(value: _downloadProgress),
-                  )
-                else
-                  const CircularProgressIndicator(),
-                const SizedBox(height: 24),
-              ],
-              if (_authMessage != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 16),
-                  child: Text(
-                    _authMessage!,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color:
-                          _isGoogleAuthenticated
-                              ? Colors.greenAccent
-                              : Colors.orangeAccent,
-                    ),
-                  ),
-                ),
-              if (_isSigningIn)
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 16),
-                  child: CircularProgressIndicator(),
-                ),
-              if (!_isGoogleAuthenticated)
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.login),
-                  label: const Text('Sign in with Google'),
-                  onPressed: _isSigningIn ? null : _ensureGoogleAuth,
-                ),
-              if (_isGoogleAuthenticated)
-                Padding(
-                  padding: const EdgeInsets.only(top: 16.0),
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.switch_account),
-                    label: const Text('Switch Google account'),
-                    onPressed: _isSigningIn ? null : _switchGoogleAccount,
-                  ),
-                ),
-              // if (_isGoogleAuthenticated)
-              //   Padding(
-              //     padding: const EdgeInsets.only(top: 16.0),
-              //     child: OutlinedButton.icon(
-              //       icon: const Icon(Icons.bug_report, color: Colors.orange),
-              //       label: const Text('Open Calendar Sandbox'),
-              //       onPressed: () {
-              //         Navigator.of(context).push(
-              //           MaterialPageRoute(
-              //             builder: (context) => const TestCalendarPage(),
-              //           ),
-              //         );
-              //       },
-              //     ),
-              //   ),
-              if (isReady &&
+      body:
+          isReady &&
                   _camera != null &&
                   _agentSession != null &&
-                  _detector != null)
-                Expanded(child: _screens[_selectedIndex]),
-            ],
-          ),
-        ),
+                  _detector != null
+              ? IndexedStack(
+                index: _selectedIndex,
+                children: [
+                  Semantics(
+                    // Tells the OS this is a distinct container/pane
+                    namesRoute: true,
+                    label: '${_tabName(0)} tab',
+                    child: _screens[0],
+                  ),
+                  Semantics(
+                    namesRoute: true,
+                    label: '${_tabName(1)} tab',
+                    child: _screens[1],
+                  ),
+                  Semantics(
+                    namesRoute: true,
+                    label: '${_tabName(2)} tab',
+                    child: _screens[2],
+                  ),
+                ],
+              )
+              : _InitializationView(
+                stageLabel: _stageLabel(),
+                initError: _initError,
+                isDownloading: _stage == _InitStage.modelDownload,
+                downloadProgress: _downloadProgress,
+              ),
+    );
+  }
+}
+
+class _InitializationView extends StatelessWidget {
+  const _InitializationView({
+    required this.stageLabel,
+    required this.initError,
+    required this.isDownloading,
+    required this.downloadProgress,
+  });
+
+  final String stageLabel;
+  final String? initError;
+  final bool isDownloading;
+  final double? downloadProgress;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child:
+            initError != null
+                ? Text(
+                  initError!,
+                  style: const TextStyle(color: Colors.redAccent),
+                  textAlign: TextAlign.center,
+                )
+                : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(stageLabel, textAlign: TextAlign.center),
+                    const SizedBox(height: 12),
+                    if (isDownloading)
+                      SizedBox(
+                        width: 240,
+                        child: LinearProgressIndicator(value: downloadProgress),
+                      )
+                    else
+                      const CircularProgressIndicator(),
+                  ],
+                ),
       ),
     );
   }
