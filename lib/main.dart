@@ -361,94 +361,38 @@ class _HomeScreenState extends State<HomeScreen> {
           BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Account'),
         ],
       ),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (_initError != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 16),
-                  child: Text(
-                    _initError!,
-                    style: const TextStyle(color: Colors.redAccent),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              if (!isReady && _initError == null) ...[
-                Text(_stageLabel(), textAlign: TextAlign.center),
-                const SizedBox(height: 12),
-                if (_stage == _InitStage.modelDownload)
-                  SizedBox(
-                    width: 240,
-                    child: LinearProgressIndicator(value: _downloadProgress),
-                  )
-                else
-                  const CircularProgressIndicator(),
-                const SizedBox(height: 24),
-              ],
-              if (_authMessage != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 16),
-                  child: Text(
-                    _authMessage!,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color:
-                          _isGoogleAuthenticated
-                              ? Colors.greenAccent
-                              : Colors.orangeAccent,
-                    ),
-                  ),
-                ),
-              if (_isSigningIn)
-                const Padding(
-                  padding: EdgeInsets.only(bottom: 16),
-                  child: CircularProgressIndicator(),
-                ),
-              if (!_isGoogleAuthenticated)
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.login),
-                  label: const Text('Sign in with Google'),
-                  onPressed: _isSigningIn ? null : _ensureGoogleAuth,
-                ),
-              if (isReady &&
+      body:
+          isReady &&
                   _camera != null &&
                   _agentSession != null &&
-                  _detector != null)
-                IndexedStack(
-                  index: _selectedIndex,
-                  children: [
-                    Semantics(
-                      // Tells the OS this is a distinct container/pane
-                      namesRoute: true,
-                      label: '${_tabName(0)} tab',
-                      child: _screens[0],
-                    ),
-                    Semantics(
-                      namesRoute: true,
-                      label: '${_tabName(1)} tab',
-                      child: _screens[1],
-                    ),
-                    Semantics(
-                      namesRoute: true,
-                      label: '${_tabName(2)} tab',
-                      child: _screens[2],
-                    ),
-                  ],
-                )
-              else
-                _InitializationView(
-                  stageLabel: _stageLabel(),
-                  initError: _initError,
-                  isDownloading: _stage == _InitStage.modelDownload,
-                  downloadProgress: _downloadProgress,
-                ),
-            ],
-          ),
-        ),
-      ),
+                  _detector != null
+              ? IndexedStack(
+                index: _selectedIndex,
+                children: [
+                  Semantics(
+                    // Tells the OS this is a distinct container/pane
+                    namesRoute: true,
+                    label: '${_tabName(0)} tab',
+                    child: _screens[0],
+                  ),
+                  Semantics(
+                    namesRoute: true,
+                    label: '${_tabName(1)} tab',
+                    child: _screens[1],
+                  ),
+                  Semantics(
+                    namesRoute: true,
+                    label: '${_tabName(2)} tab',
+                    child: _screens[2],
+                  ),
+                ],
+              )
+              : _InitializationView(
+                stageLabel: _stageLabel(),
+                initError: _initError,
+                isDownloading: _stage == _InitStage.modelDownload,
+                downloadProgress: _downloadProgress,
+              ),
     );
   }
 }
