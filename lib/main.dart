@@ -172,9 +172,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startInitialization() async {
-    if (mounted) {
-      setState(() => _stage = _InitStage.auth);
-    }
     await _ensureGoogleAuth();
     await _initEverything();
   }
