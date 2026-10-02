@@ -172,8 +172,38 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startInitialization() async {
-    await _ensureGoogleAuth();
+    // NOTE: Google sign-in must NOT block startup. GoogleSignIn.authenticate()
+    // launches an interactive flow that never returns on a device without a
+    // Google account (e.g. a fresh emulator), which previously left the whole
+    // app stuck on "Signing in with Google..." because _initEverything() (camera,
+    // model, detector) was awaited *after* auth. Camera + offline Gemma chat do
+    // not need Google auth; only the calendar/email tools do, and those are
+    // reachable from the Account tab's Sign in button (onSignIn: _ensureGoogleAuth).
+    //
+    // So we always initialize the core app first, and attempt a silent,
+    // non-interactive sign-in in the background (no UI, never blocks). Interactive
+    // sign-in happens on demand from the Account tab.
+    unawaited(_attemptSilentGoogleAuth());
     await _initEverything();
+  }
+
+  // Non-interactive, non-blocking sign-in attempt. Restores an existing Google
+  // session if one is available, but never pops the interactive sign-in UI and
+  // never blocks app initialization. Safe to fire-and-forget.
+  Future<void> _attemptSilentGoogleAuth() async {
+    try {
+      final restored = await GoogleAuthService.instance.attemptSilentSignIn();
+      if (!mounted || !restored) return;
+      setState(() {
+        _isGoogleAuthenticated = true;
+        final account = GoogleAuthService.instance.account;
+        _authMessage = 'Signed in as ${account?.email ?? 'Google account'}';
+      });
+      _agentSession?.registry.select('list-events');
+    } catch (_) {
+      // No existing session / not signed in — leave the user signed out.
+      // They can sign in from the Account tab when they want calendar/email.
+    }
   }
 
   Future<void> _initEverything() async {

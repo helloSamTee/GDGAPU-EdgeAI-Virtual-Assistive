@@ -16,6 +16,19 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
+// The camera_android_camerax plugin (CameraX 1.5.x) references
+// androidx.concurrent.futures.CallbackToFutureAdapter through a @NonNull
+// annotation on SurfaceRequest, but that library isn't on its compile
+// classpath — which fails compileDebugJavaWithJavac. Add it explicitly to
+// the plugin module.
+subprojects {
+    if (project.name == "camera_android_camerax") {
+        project.afterEvaluate {
+            dependencies.add("implementation", "androidx.concurrent:concurrent-futures:1.2.0")
+        }
+    }
+}
+
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
