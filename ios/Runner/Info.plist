@@ -10,12 +10,12 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 			<!-- Copied from Google Cloud Console -> iOS Client -> iOS URL scheme -->
-			<string>com.googleusercontent.apps.667595621530-rpe3b32v6d0i0igb0b4kg13dfld75q6o</string>
+			<string>com.googleusercontent.apps.XXXXXXXXXXX-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX</string>
 			</array>
 		</dict>
 	</array>
 	<key>GIDClientID</key>
-	<string>667595621530-rpe3b32v6d0i0igb0b4kg13dfld75q6o.apps.googleusercontent.com</string>
+	<string>XXXXXXXXXXX-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX.apps.googleusercontent.com</string>
 	<key>NSCameraUsageDescription</key>
 	<string>We use the camera for multimodal AI input.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
