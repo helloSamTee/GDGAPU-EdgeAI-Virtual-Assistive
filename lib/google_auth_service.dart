@@ -45,6 +45,23 @@ class GoogleAuthService {
     _initialized = true;
   }
 
+  // Non-interactive sign-in: restores an existing Google session if one is
+  // available, but NEVER launches the interactive sign-in UI. Returns true if a
+  // session was restored, false otherwise. Safe to call at startup because it
+  // can't block on user interaction (unlike authenticate()).
+  Future<bool> attemptSilentSignIn() async {
+    await _ensureInitialized();
+    try {
+      final account =
+          await _googleSignIn.attemptLightweightAuthentication();
+      if (account == null) return false;
+      _account = account;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   // Signs the user in (reusing an existing session where possible), makes
   // sure the required scopes are granted, and returns an authenticated HTTP
   // client that can back any googleapis API class.

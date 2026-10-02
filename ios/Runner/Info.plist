@@ -2,6 +2,20 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+			<!-- Copied from Google Cloud Console -> iOS Client -> iOS URL scheme -->
+			<string>com.googleusercontent.apps.667595621530-rpe3b32v6d0i0igb0b4kg13dfld75q6o</string>
+			</array>
+		</dict>
+	</array>
+	<key>GIDClientID</key>
+	<string>667595621530-rpe3b32v6d0i0igb0b4kg13dfld75q6o.apps.googleusercontent.com</string>
 	<key>NSCameraUsageDescription</key>
 	<string>We use the camera for multimodal AI input.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
