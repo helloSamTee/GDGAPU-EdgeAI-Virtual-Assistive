@@ -284,9 +284,6 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() => _stage = _InitStage.detector);
       _detector = await ObjectDetector.create();
 
-      setState(() => _stage = _InitStage.detector);
-      _detector = await ObjectDetector.create();
-
       _tts = FlutterTts();
       await _tts!.setLanguage('en-US');
       await _tts!.setSpeechRate(0.5);

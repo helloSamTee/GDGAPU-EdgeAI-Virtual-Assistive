@@ -5,4 +5,4 @@ argument-hint: '{}'
 ---
 
 # Read Latest Email
-Fetches metadata and a brief text snippet for the most recently received email in the user's primary Gmail inbox. This tool does not require any arguments.
+Fetches metadata and a brief text snippet for the most recently received email in the user's Gmail inbox. This tool does not require any arguments.
